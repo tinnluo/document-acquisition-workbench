@@ -3,17 +3,24 @@ from __future__ import annotations
 import csv
 import json
 from pathlib import Path
+from typing import Any
 
 from doc_workbench.models import DiscoveryCandidate, ReviewRow
+from doc_workbench.policy import ContextPolicy
 from doc_workbench.review.classifier import to_review_row
 
 
-def build_review_rows(discovery_json: Path) -> list[ReviewRow]:
+def build_review_rows(
+    discovery_json: Path,
+    policy: ContextPolicy,
+) -> tuple[list[ReviewRow], list[dict[str, Any]], dict[str, int]]:
     payload = json.loads(discovery_json.read_text(encoding="utf-8"))
     rows: list[ReviewRow] = []
+    review_trace: list[dict[str, Any]] = []
+    recommendation_summary = {"approved": 0, "needs_review": 0, "rejected": 0}
+
     for record in payload:
-        candidates = record.get("candidates", [])
-        for raw in candidates:
+        for raw in record.get("candidates", []):
             candidate = DiscoveryCandidate(
                 entity_id=str(raw.get("entity_id") or record.get("entity_id") or ""),
                 entity_name=str(raw.get("entity_name") or record.get("name") or ""),
@@ -33,8 +40,12 @@ def build_review_rows(discovery_json: Path) -> list[ReviewRow]:
                 followup_seed_document_id=str(raw.get("followup_seed_document_id") or ""),
                 followup_target_document_id=str(raw.get("followup_target_document_id") or ""),
             )
-            rows.append(to_review_row(candidate))
-    return rows
+            row, trace_row = to_review_row(candidate, policy)
+            rows.append(row)
+            review_trace.append(trace_row)
+            recommendation_summary[row.recommendation] = recommendation_summary.get(row.recommendation, 0) + 1
+
+    return rows, review_trace, recommendation_summary
 
 
 def write_review_csv(path: Path, rows: list[ReviewRow]) -> Path:

@@ -26,6 +26,7 @@ class WorkspacePaths:
     registry_root: Path
     runs_root: Path
     cache_root: Path
+    traces_root: Path
 
     @classmethod
     def resolve(cls, workspace_root: str | None = None) -> "WorkspacePaths":
@@ -39,6 +40,7 @@ class WorkspacePaths:
             registry_root=root / "registry",
             runs_root=root / "runs",
             cache_root=root / "cache",
+            traces_root=root / "traces",
         )
 
     def ensure(self) -> None:
@@ -46,6 +48,7 @@ class WorkspacePaths:
         self.registry_root.mkdir(parents=True, exist_ok=True)
         self.runs_root.mkdir(parents=True, exist_ok=True)
         self.cache_root.mkdir(parents=True, exist_ok=True)
+        self.traces_root.mkdir(parents=True, exist_ok=True)
 
     def new_run_dir(self, name: str) -> tuple[Path, str]:
         stamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")

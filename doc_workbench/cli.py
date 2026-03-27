@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import csv
 import json
+import time
 from pathlib import Path
 
 import typer
@@ -10,6 +11,7 @@ from rich.console import Console
 from rich.table import Table
 
 from doc_workbench.acquisition.discovery import (
+    build_ranking_trace,
     discover_entity,
     load_entities,
     write_discovery_artifacts,
@@ -21,6 +23,8 @@ from doc_workbench.acquisition.followup.workflow import (
 )
 from doc_workbench.config import WorkspacePaths
 from doc_workbench.models import DownloadRow, MetadataScanRow
+from doc_workbench.observability.tracer import RunTrace, summarize_trace
+from doc_workbench.policy import load_context_policy, write_resolved_policy
 from doc_workbench.registry.document_registry import DocumentRegistry
 from doc_workbench.registry.metadata_scanner import scan_pdf
 from doc_workbench.review.workflow import build_review_rows, write_review_csv
@@ -41,7 +45,22 @@ def show_paths(workspace_root: str | None = typer.Option(None, "--workspace-root
     table.add_row("registry_root", str(paths.registry_root))
     table.add_row("runs_root", str(paths.runs_root))
     table.add_row("cache_root", str(paths.cache_root))
+    table.add_row("traces_root", str(paths.traces_root))
     console.print(table)
+
+
+@app.command("policy")
+def show_policy(policy_path: str | None = typer.Option(None, "--policy-path")) -> None:
+    policy = load_context_policy(policy_path)
+    console.print_json(json.dumps({"policy_digest": policy.digest, **policy.to_dict()}, indent=2))
+
+
+@app.command("trace-summary")
+def trace_summary(
+    input_path: Path = typer.Option(..., "--input"),
+) -> None:
+    summary = summarize_trace(input_path)
+    console.print_json(json.dumps(summary, indent=2))
 
 
 @app.command("discover")
@@ -49,33 +68,70 @@ def discover(
     entities: Path = typer.Option(Path("examples/public_companies.csv"), "--entities"),
     workspace_root: str | None = typer.Option(None, "--workspace-root"),
     followup_search: bool = typer.Option(False, "--followup-search/--no-followup-search"),
+    policy_path: str | None = typer.Option(None, "--policy-path"),
 ) -> None:
     paths = WorkspacePaths.resolve(workspace_root)
     paths.ensure()
-    records = asyncio.run(_discover_all(load_entities(entities), followup_search=followup_search))
-    output_dir, _run_id = paths.new_run_dir("discover")
+    policy = load_context_policy(policy_path)
+    output_dir, run_id = paths.new_run_dir("discover")
+    tracer = RunTrace(trace_id=run_id, run_id=run_id, command="discover", policy_digest=policy.digest)
+    records = asyncio.run(_discover_all(load_entities(entities), followup_search=followup_search, policy=policy, tracer=tracer))
     json_path, csv_path = write_discovery_artifacts(output_dir, records)
+    ranking_trace_path = output_dir / "ranking_trace.json"
+    ranking_trace_path.write_text(json.dumps(build_ranking_trace(records, policy), indent=2), encoding="utf-8")
+    write_resolved_policy(output_dir / "resolved_policy.json", policy)
+    trace_path = tracer.write(paths.traces_root / f"{run_id}.json")
     console.print(f"Discovery JSON: {json_path}")
     console.print(f"Discovery summary: {csv_path}")
+    console.print(f"Resolved policy: {output_dir / 'resolved_policy.json'}")
+    console.print(f"Ranking trace: {ranking_trace_path}")
+    console.print(f"Trace file: {trace_path}")
 
 
-async def _discover_all(entities: list, *, followup_search: bool) -> list:
-    return await asyncio.gather(
-        *(discover_entity(entity, followup_search=followup_search) for entity in entities)
-    )
+async def _discover_all(entities: list, *, followup_search: bool, policy, tracer: RunTrace) -> list:
+    records = []
+    for entity in entities:
+        records.append(
+            await discover_entity(
+                entity,
+                followup_search=followup_search,
+                policy=policy,
+                tracer=tracer,
+            )
+        )
+    return records
 
 
 @app.command("review")
 def review(
     input_path: Path = typer.Option(..., "--input"),
     workspace_root: str | None = typer.Option(None, "--workspace-root"),
+    policy_path: str | None = typer.Option(None, "--policy-path"),
 ) -> None:
     paths = WorkspacePaths.resolve(workspace_root)
     paths.ensure()
-    rows = build_review_rows(input_path)
-    output_dir, _run_id = paths.new_run_dir("review")
+    policy = load_context_policy(policy_path)
+    output_dir, run_id = paths.new_run_dir("review")
+    tracer = RunTrace(trace_id=run_id, run_id=run_id, command="review", policy_digest=policy.digest)
+    rows, review_trace, recommendation_summary = build_review_rows(input_path, policy)
     csv_path = write_review_csv(output_dir / "review_queue.csv", rows)
+    review_trace_path = output_dir / "review_trace.json"
+    review_trace_path.write_text(json.dumps(review_trace, indent=2), encoding="utf-8")
+    write_resolved_policy(output_dir / "resolved_policy.json", policy)
+    tracer.add_span(
+        entity_id="all",
+        stage="review_queue_generation",
+        provider="review_policy",
+        latency_ms=0.0,
+        candidate_count_in=len(review_trace),
+        candidate_count_out=len(rows),
+        recommendation_summary=recommendation_summary,
+    )
+    trace_path = tracer.write(paths.traces_root / f"{run_id}.json")
     console.print(f"Review queue: {csv_path}")
+    console.print(f"Review trace: {review_trace_path}")
+    console.print(f"Resolved policy: {output_dir / 'resolved_policy.json'}")
+    console.print(f"Trace file: {trace_path}")
 
 
 @app.command("download")
@@ -85,8 +141,10 @@ def download(
 ) -> None:
     paths = WorkspacePaths.resolve(workspace_root)
     paths.ensure()
-    output_dir, _run_id = paths.new_run_dir("download")
+    output_dir, run_id = paths.new_run_dir("download")
+    tracer = RunTrace(trace_id=run_id, run_id=run_id, command="download", policy_digest="")
     registry = DocumentRegistry(paths.registry_root)
+    start = time.perf_counter()
     rows = asyncio.run(_download_from_review(input_path, registry))
     json_path = output_dir / "download_results.json"
     csv_path = output_dir / "download_results.csv"
@@ -97,8 +155,18 @@ def download(
         writer.writeheader()
         for row in rows:
             writer.writerow(row.to_dict())
+    tracer.add_span(
+        entity_id="all",
+        stage="download_documents",
+        provider="registry_downloader",
+        latency_ms=(time.perf_counter() - start) * 1000.0,
+        candidate_count_in=len(rows),
+        candidate_count_out=sum(1 for row in rows if row.status == "complete"),
+    )
+    trace_path = tracer.write(paths.traces_root / f"{run_id}.json")
     console.print(f"Download results: {json_path}")
     console.print(f"Registry root: {paths.registry_root}")
+    console.print(f"Trace file: {trace_path}")
 
 
 async def _download_from_review(input_path: Path, registry: DocumentRegistry) -> list[DownloadRow]:
@@ -111,11 +179,7 @@ async def _download_from_review(input_path: Path, registry: DocumentRegistry) ->
             url = str(row.get("url") or "")
             try:
                 existing_followup_id = str(row.get("followup_target_document_id") or "").strip()
-                if existing_followup_id:
-                    existing_manifest = registry.get_manifest(existing_followup_id)
-                else:
-                    existing_manifest = None
-
+                existing_manifest = registry.get_manifest(existing_followup_id) if existing_followup_id else None
                 if existing_manifest is not None:
                     local_path = Path(str(existing_manifest["local_path"]))
                     pdf_bytes = local_path.read_bytes()
@@ -179,16 +243,19 @@ async def _download_from_review(input_path: Path, registry: DocumentRegistry) ->
 def followup_search(
     input_path: Path = typer.Option(..., "--input"),
     workspace_root: str | None = typer.Option(None, "--workspace-root"),
+    policy_path: str | None = typer.Option(None, "--policy-path"),
 ) -> None:
     paths = WorkspacePaths.resolve(workspace_root)
     paths.ensure()
+    policy = load_context_policy(policy_path)
     registry = DocumentRegistry(paths.registry_root)
-    output_dir, _run_id = paths.new_run_dir("followup_search")
+    output_dir, run_id = paths.new_run_dir("followup_search")
+    tracer = RunTrace(trace_id=run_id, run_id=run_id, command="followup-search", policy_digest=policy.digest)
     records = load_discovery_records(input_path)
     results_by_entity: dict[str, list] = {}
     promoted_candidates = []
     enriched_records = []
-    for record in asyncio.run(_followup_all(records, registry)):
+    for record in asyncio.run(_followup_all(records, registry, policy, tracer)):
         enriched_records.append(record["record"])
         results_by_entity[record["entity_id"]] = record["results"]
         promoted_candidates.extend(record["promoted"])
@@ -198,31 +265,58 @@ def followup_search(
         promoted_candidates=promoted_candidates,
         enriched_records=enriched_records,
     )
+    write_resolved_policy(output_dir / "resolved_policy.json", policy)
+    trace_path = tracer.write(paths.traces_root / f"{run_id}.json")
     console.print(f"Follow-up results: {results_path}")
     console.print(f"Promoted candidates: {promoted_json_path}")
     console.print(f"Enriched discovery: {enriched_path}")
+    console.print(f"Resolved policy: {output_dir / 'resolved_policy.json'}")
+    console.print(f"Trace file: {trace_path}")
 
 
-async def _followup_all(records: list, registry: DocumentRegistry) -> list[dict]:
+async def _followup_all(records: list, registry: DocumentRegistry, policy, tracer: RunTrace) -> list[dict]:
     output: list[dict] = []
+    approval_cutoff = policy.review_thresholds.approved_min_confidence
     for record in records:
         seed_candidates = [
             candidate
             for candidate in record.candidates
-            if candidate.source_type == "search" or candidate.source_tier.startswith("search_")
+            if (candidate.source_type == "search" or candidate.source_tier.startswith("search_"))
+            and candidate.source_tier in policy.followup_search.allowed_seed_source_tiers
         ]
-        results, promoted = await run_followup_for_candidates(
-            record.entity,
-            seed_candidates,
-            materialize=True,
-            registry=registry,
+        has_higher_priority_candidate = any(
+            candidate.source_tier in {"official", "regulatory"} and candidate.confidence >= approval_cutoff
+            for candidate in record.candidates
         )
+        enabled = not (policy.followup_search.skip_if_higher_priority_approved and has_higher_priority_candidate)
+        start = time.perf_counter()
+        if enabled:
+            results, promoted = await run_followup_for_candidates(
+                record.entity,
+                seed_candidates,
+                materialize=True,
+                registry=registry,
+            )
+        else:
+            results, promoted = [], []
         deduped: dict[str, object] = {}
         for candidate in [*record.candidates, *promoted]:
             existing = deduped.get(candidate.url)
             if existing is None or candidate.confidence > existing.confidence:
                 deduped[candidate.url] = candidate
         record.candidates = sorted(deduped.values(), key=lambda item: item.confidence, reverse=True)
+        top = record.candidates[0] if record.candidates else None
+        tracer.add_span(
+            entity_id=record.entity.entity_id,
+            stage="followup_extraction",
+            provider="followup_search",
+            latency_ms=(time.perf_counter() - start) * 1000.0,
+            candidate_count_in=len(seed_candidates),
+            candidate_count_out=len(promoted),
+            top_candidate_url=top.url if top else "",
+            top_confidence=float(top.confidence) if top else 0.0,
+            details={"enabled": enabled, "skip_due_to_policy": has_higher_priority_candidate},
+        )
         output.append(
             {
                 "entity_id": record.entity.entity_id,
@@ -247,8 +341,10 @@ def scan(
     paths.ensure()
     registry = DocumentRegistry(paths.registry_root)
     manifests = registry.list_manifests(entity_id or None, artifact_family="annual_reports")
-    output_dir, _run_id = paths.new_run_dir("scan")
+    output_dir, run_id = paths.new_run_dir("scan")
+    tracer = RunTrace(trace_id=run_id, run_id=run_id, command="scan", policy_digest="")
     rows: list[MetadataScanRow] = []
+    start = time.perf_counter()
     for manifest in manifests:
         if not force and ((manifest.get("pipeline_status") or {}).get("metadata_scan_status") == "complete"):
             continue
@@ -277,4 +373,14 @@ def scan(
         )
     json_path = output_dir / "scan_results.json"
     json_path.write_text(json.dumps([row.to_dict() for row in rows], indent=2), encoding="utf-8")
+    tracer.add_span(
+        entity_id=entity_id or "all",
+        stage="metadata_scan",
+        provider="metadata_scanner",
+        latency_ms=(time.perf_counter() - start) * 1000.0,
+        candidate_count_in=len(manifests),
+        candidate_count_out=len(rows),
+    )
+    trace_path = tracer.write(paths.traces_root / f"{run_id}.json")
     console.print(f"Metadata scan results: {json_path}")
+    console.print(f"Trace file: {trace_path}")
