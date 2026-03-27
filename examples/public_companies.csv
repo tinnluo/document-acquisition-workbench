@@ -1,0 +1,4 @@
+entity_id,name,ticker,official_website,cik,country
+msft,Microsoft Corporation,MSFT,https://www.microsoft.com/en-us/investor,0000789019,US
+nvda,NVIDIA Corporation,NVDA,https://investor.nvidia.com,0001045810,US
+ko,The Coca-Cola Company,KO,https://investors.coca-colacompany.com,0000021344,US
