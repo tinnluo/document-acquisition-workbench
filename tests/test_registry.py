@@ -12,7 +12,6 @@ def _sample_pdf_bytes() -> bytes:
     writer = PdfWriter()
     writer.add_blank_page(width=200, height=200)
     writer.add_metadata({"/Title": "Annual Report 2024"})
-    path = Path("sample.pdf")
     from io import BytesIO
 
     buffer = BytesIO()

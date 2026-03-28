@@ -1,5 +1,7 @@
 # Document Acquisition Workbench
 
+![CI](https://img.shields.io/badge/CI-placeholder-lightgrey)
+
 `doc_workbench` is a CLI-driven demo for discovering public annual reports or filings, reviewing candidates, downloading approved documents, and recording metadata in a local registry.
 
 This public demo rebuilds a production architectural pattern in a public-safe form. It preserves system design, module boundaries, and execution flow while removing proprietary business logic and internal data.
@@ -16,6 +18,15 @@ python -m venv .venv
 . .venv/bin/activate
 python -m pip install -e ".[dev]"
 ```
+
+## Docker
+
+```bash
+docker build -t doc-workbench .
+docker run --rm -it -v "$PWD:/app" doc-workbench paths
+```
+
+Bind-mounting the repo keeps `workspace/` outputs on the host and makes repo-relative inputs such as `context/` and `examples/` available inside the container.
 
 ## Commands
 
