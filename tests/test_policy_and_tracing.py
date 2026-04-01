@@ -6,7 +6,7 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from doc_workbench import cli
-from doc_workbench.models import DiscoveryRecord, EntityRecord, DiscoveryCandidate
+from doc_workbench.models import DiscoveryCandidate, DiscoveryRecord
 
 runner = CliRunner()
 
