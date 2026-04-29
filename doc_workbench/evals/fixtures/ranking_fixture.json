@@ -1,0 +1,184 @@
+[
+  {
+    "entity_id": "AAPL",
+    "name": "Apple Inc.",
+    "ticker": "AAPL",
+    "official_website": "https://www.apple.com",
+    "cik": "0000320193",
+    "country": "US",
+    "status": "success",
+    "errors": [],
+    "candidates": [
+      {
+        "entity_id": "AAPL",
+        "entity_name": "Apple Inc.",
+        "url": "https://www.apple.com/investor/annual-reports/2023/annual-report.pdf",
+        "title": "Apple Inc. 2023 Annual Report PDF",
+        "snippet": "official site",
+        "source_type": "official_site",
+        "source_tier": "official",
+        "document_kind": "official_pdf",
+        "year": 2023,
+        "confidence": 0.90,
+        "reasons": ["official_site_link", "pdf", "annual_report_terms", "same_domain"]
+      },
+      {
+        "entity_id": "AAPL",
+        "entity_name": "Apple Inc.",
+        "url": "https://www.apple.com/investor/",
+        "title": "Apple Investor Relations",
+        "snippet": "official site",
+        "source_type": "official_site",
+        "source_tier": "official",
+        "document_kind": "official_html",
+        "year": null,
+        "confidence": 0.55,
+        "reasons": ["official_site_link", "annual_report_terms", "same_domain"]
+      },
+      {
+        "entity_id": "AAPL",
+        "entity_name": "Apple Inc.",
+        "url": "https://some-third-party.com/apple-annual-report-2023.pdf",
+        "title": "Apple Annual Report 2023",
+        "snippet": "third party mirror",
+        "source_type": "search",
+        "source_tier": "search_fallback",
+        "document_kind": "other",
+        "year": 2023,
+        "confidence": 0.45,
+        "reasons": ["search_result", "pdf", "annual_report_terms"]
+      }
+    ],
+    "_expected": {
+      "top_url": "https://www.apple.com/investor/annual-reports/2023/annual-report.pdf",
+      "top_recommendation": "approved",
+      "recall_urls": [
+        "https://www.apple.com/investor/annual-reports/2023/annual-report.pdf",
+        "https://www.apple.com/investor/"
+      ]
+    }
+  },
+  {
+    "entity_id": "NESN",
+    "name": "Nestle S.A.",
+    "ticker": "NESN",
+    "official_website": "https://www.nestle.com",
+    "cik": "",
+    "country": "CH",
+    "status": "success",
+    "errors": [],
+    "candidates": [
+      {
+        "entity_id": "NESN",
+        "entity_name": "Nestle S.A.",
+        "url": "https://www.nestle.com/sites/default/files/2023-annual-report.pdf",
+        "title": "Nestle 2023 Annual Report",
+        "snippet": "official site",
+        "source_type": "official_site",
+        "source_tier": "official",
+        "document_kind": "official_pdf",
+        "year": 2023,
+        "confidence": 0.85,
+        "reasons": ["official_site_link", "pdf", "annual_report_terms", "same_domain"]
+      },
+      {
+        "entity_id": "NESN",
+        "entity_name": "Nestle S.A.",
+        "url": "https://unrelated-site.com/nestle-results",
+        "title": "Nestle Results 2023",
+        "snippet": "external blog post",
+        "source_type": "search",
+        "source_tier": "search_fallback",
+        "document_kind": "other",
+        "year": 2023,
+        "confidence": 0.35,
+        "reasons": ["search_result"]
+      }
+    ],
+    "_expected": {
+      "top_url": "https://www.nestle.com/sites/default/files/2023-annual-report.pdf",
+      "top_recommendation": "approved",
+      "recall_urls": [
+        "https://www.nestle.com/sites/default/files/2023-annual-report.pdf"
+      ]
+    }
+  },
+  {
+    "entity_id": "LOW_CONF",
+    "name": "Low Confidence Corp.",
+    "ticker": "LCC",
+    "official_website": "https://www.lowconfidencecorp.com",
+    "cik": "",
+    "country": "US",
+    "status": "success",
+    "errors": [],
+    "candidates": [
+      {
+        "entity_id": "LOW_CONF",
+        "entity_name": "Low Confidence Corp.",
+        "url": "https://unrelated.net/some-page",
+        "title": "Some unrelated page",
+        "snippet": "no keywords",
+        "source_type": "search",
+        "source_tier": "search_fallback",
+        "document_kind": "other",
+        "year": null,
+        "confidence": 0.35,
+        "reasons": ["search_result"]
+      }
+    ],
+    "_expected": {
+      "top_url": "https://unrelated.net/some-page",
+      "top_recommendation": "rejected",
+      "recall_urls": []
+    }
+  },
+  {
+    "_comment": "Ranking reorder case: candidates arrive with a lower-quality result first. rank_node must reorder them so the same-domain PDF surfaces at the top.",
+    "entity_id": "RANK_TEST",
+    "name": "Rank Test Corp.",
+    "ticker": "RTC",
+    "official_website": "https://www.ranktestcorp.com",
+    "cik": "",
+    "country": "US",
+    "status": "success",
+    "errors": [],
+    "candidates": [
+      {
+        "_comment": "Deliberately placed first but should rank second after rescoring — no PDF, no same_domain.",
+        "entity_id": "RANK_TEST",
+        "entity_name": "Rank Test Corp.",
+        "url": "https://unrelated-news.com/rank-test-results-2023",
+        "title": "Rank Test Corp Results 2023",
+        "snippet": "external news article",
+        "source_type": "search",
+        "source_tier": "search_fallback",
+        "document_kind": "other",
+        "year": 2023,
+        "confidence": 0.36,
+        "reasons": ["search_result"]
+      },
+      {
+        "_comment": "Should rank first after rescoring — same domain + PDF + annual_report_terms.",
+        "entity_id": "RANK_TEST",
+        "entity_name": "Rank Test Corp.",
+        "url": "https://www.ranktestcorp.com/investor/annual-report-2023.pdf",
+        "title": "Rank Test Corp 2023 Annual Report",
+        "snippet": "official site investor",
+        "source_type": "official_site",
+        "source_tier": "official",
+        "document_kind": "official_pdf",
+        "year": 2023,
+        "confidence": 0.36,
+        "reasons": ["official_site_link"]
+      }
+    ],
+    "_expected": {
+      "top_url": "https://www.ranktestcorp.com/investor/annual-report-2023.pdf",
+      "top_recommendation": "approved",
+      "recall_urls": [
+        "https://www.ranktestcorp.com/investor/annual-report-2023.pdf"
+      ]
+    }
+  }
+]

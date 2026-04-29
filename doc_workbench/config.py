@@ -6,6 +6,32 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 
+VALID_ENGINES = ("legacy", "langgraph")
+
+
+def resolve_engine(cli_override: str | None = None) -> str:
+    """Return the engine to use: explicit flag > env var > 'legacy'.
+
+    Raises ``ValueError`` on any unrecognised value so typos fail fast rather
+    than silently running the wrong path.
+    """
+    if cli_override is not None:
+        if cli_override not in VALID_ENGINES:
+            raise ValueError(
+                f"Unknown engine {cli_override!r}. Valid choices: {VALID_ENGINES}"
+            )
+        return cli_override
+    env = os.environ.get("DOC_WORKBENCH_ENGINE", "").strip().lower()
+    if env:
+        if env not in VALID_ENGINES:
+            raise ValueError(
+                f"DOC_WORKBENCH_ENGINE={env!r} is not a recognised engine. "
+                f"Valid choices: {VALID_ENGINES}"
+            )
+        return env
+    return "legacy"
+
+
 def slugify(value: str) -> str:
     output = []
     last_dash = False

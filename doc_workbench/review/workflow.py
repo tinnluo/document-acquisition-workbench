@@ -5,9 +5,31 @@ import json
 from pathlib import Path
 from typing import Any
 
-from doc_workbench.models import DiscoveryCandidate, ReviewRow
+from doc_workbench.models import DiscoveryCandidate, DiscoveryRecord, ReviewRow
 from doc_workbench.policy import ContextPolicy
 from doc_workbench.review.classifier import to_review_row
+
+
+def build_review_rows_from_records(
+    records: list[DiscoveryRecord],
+    policy: ContextPolicy,
+) -> tuple[list[ReviewRow], list[dict[str, Any]], dict[str, int]]:
+    """Build review rows from an in-memory list of DiscoveryRecord objects.
+
+    Used by the LangGraph review_prep_node to avoid a round-trip through disk.
+    """
+    rows: list[ReviewRow] = []
+    review_trace: list[dict[str, Any]] = []
+    recommendation_summary: dict[str, int] = {"approved": 0, "needs_review": 0, "rejected": 0}
+
+    for record in records:
+        for candidate in record.candidates:
+            row, trace_row = to_review_row(candidate, policy)
+            rows.append(row)
+            review_trace.append(trace_row)
+            recommendation_summary[row.recommendation] = recommendation_summary.get(row.recommendation, 0) + 1
+
+    return rows, review_trace, recommendation_summary
 
 
 def build_review_rows(

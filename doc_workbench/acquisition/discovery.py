@@ -224,7 +224,24 @@ async def discover_entity(
     followup_search: bool = False,
     policy: ContextPolicy | None = None,
     tracer: RunTrace | None = None,
+    _skip_ranking: bool = False,
+    _force_skip_followup: bool = False,
 ) -> DiscoveryRecord:
+    """Discover annual-report candidates for a single entity.
+
+    Parameters
+    ----------
+    _skip_ranking:
+        When ``True`` the final dedup/sort/cap-to-10 step is skipped and the
+        full raw candidate pool is returned.  Use this in the LangGraph path
+        so that ``followup_node`` and ``rank_node`` operate on the complete set
+        rather than an already-truncated list.  Not part of the public API.
+    _force_skip_followup:
+        When ``True`` follow-up extraction is unconditionally skipped,
+        regardless of ``followup_search`` or policy settings.  Use this in the
+        LangGraph path where follow-up is owned exclusively by ``followup_node``
+        and must not run inside ``discover_entity``.  Not part of the public API.
+    """
     if policy is None:
         from doc_workbench.policy import load_context_policy
 
@@ -307,12 +324,15 @@ async def discover_entity(
         )
 
     followup_candidates: list[DiscoveryCandidate] = []
-    followup_enabled, followup_reason = _followup_allowed(
-        policy=policy,
-        followup_search=followup_search,
-        official_candidates=official_candidates,
-        regulatory_candidates=regulatory_candidates,
-    )
+    if _force_skip_followup:
+        followup_enabled, followup_reason = False, "graph_node_owns_followup"
+    else:
+        followup_enabled, followup_reason = _followup_allowed(
+            policy=policy,
+            followup_search=followup_search,
+            official_candidates=official_candidates,
+            regulatory_candidates=regulatory_candidates,
+        )
     followup_start = time.perf_counter()
     if followup_enabled and search_candidates:
         try:
@@ -328,7 +348,9 @@ async def discover_entity(
             )
         except Exception as exc:
             errors.append(f"followup_search:{type(exc).__name__}")
-    if tracer is not None:
+    if tracer is not None and not _force_skip_followup:
+        # Suppress this span in the LangGraph path — followup_node owns the
+        # authoritative followup_extraction span there.
         top_url, top_confidence = _top_candidate_fields(followup_candidates)
         tracer.add_span(
             entity_id=entity.entity_id,
@@ -349,29 +371,58 @@ async def discover_entity(
         existing = deduped.get(candidate.url)
         if existing is None or candidate.confidence > existing.confidence:
             deduped[candidate.url] = candidate
-    candidates = sorted(deduped.values(), key=lambda item: item.confidence, reverse=True)[:10]
+    if _skip_ranking:
+        # Return the full deduplicated pool without sorting or capping so that
+        # downstream stages (followup_node, rank_node) receive the complete set.
+        candidates = list(deduped.values())
+    else:
+        candidates = sorted(deduped.values(), key=lambda item: item.confidence, reverse=True)[:10]
     if tracer is not None:
-        top_url, top_confidence = _top_candidate_fields(candidates)
-        tracer.add_span(
-            entity_id=entity.entity_id,
-            stage="candidate_ranking",
-            provider="ranking_policy",
-            latency_ms=(time.perf_counter() - ranking_start) * 1000.0,
-            candidate_count_in=len(all_candidates),
-            candidate_count_out=len(candidates),
-            top_candidate_url=top_url,
-            top_confidence=top_confidence,
-        )
-        tracer.add_span(
-            entity_id=entity.entity_id,
-            stage="discover_entity",
-            provider="orchestrator",
-            latency_ms=(time.perf_counter() - entity_start) * 1000.0,
-            candidate_count_in=0,
-            candidate_count_out=len(candidates),
-            top_candidate_url=top_url,
-            top_confidence=top_confidence,
-        )
+        if _skip_ranking:
+            # In the LangGraph path, ranking is deferred to rank_node.
+            # Emit a ``candidate_pool_assembled`` span (distinct from the final
+            # ``candidate_ranking`` span emitted by rank_node) so local traces
+            # have full coverage without double-counting the ranking stage.
+            # The ``ranking_deferred`` flag lets trace consumers identify this
+            # as a pre-rank diagnostic rather than the authoritative ranking event.
+            top_url, top_confidence = (
+                max(candidates, key=lambda c: c.confidence, default=None),
+                max((c.confidence for c in candidates), default=0.0),
+            )
+            top_url = top_url.url if top_url else ""
+            tracer.add_span(
+                entity_id=entity.entity_id,
+                stage="candidate_pool_assembled",
+                provider="orchestrator",
+                latency_ms=(time.perf_counter() - ranking_start) * 1000.0,
+                candidate_count_in=len(all_candidates),
+                candidate_count_out=len(candidates),
+                top_candidate_url=top_url,
+                top_confidence=top_confidence,
+                details={"ranking_deferred": True, "note": "unsorted; rank_node owns final ranking and capping"},
+            )
+        else:
+            top_url, top_confidence = _top_candidate_fields(candidates)
+            tracer.add_span(
+                entity_id=entity.entity_id,
+                stage="candidate_ranking",
+                provider="ranking_policy",
+                latency_ms=(time.perf_counter() - ranking_start) * 1000.0,
+                candidate_count_in=len(all_candidates),
+                candidate_count_out=len(candidates),
+                top_candidate_url=top_url,
+                top_confidence=top_confidence,
+            )
+            tracer.add_span(
+                entity_id=entity.entity_id,
+                stage="discover_entity",
+                provider="orchestrator",
+                latency_ms=(time.perf_counter() - entity_start) * 1000.0,
+                candidate_count_in=0,
+                candidate_count_out=len(candidates),
+                top_candidate_url=top_url,
+                top_confidence=top_confidence,
+            )
 
     status = "success" if candidates else "no_result"
     return DiscoveryRecord(entity=entity, status=status, candidates=candidates, errors=errors)

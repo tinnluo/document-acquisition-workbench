@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import csv
 import json
+import click
 import time
 from pathlib import Path
 
@@ -21,13 +22,13 @@ from doc_workbench.acquisition.followup.workflow import (
     run_followup_for_candidates,
     write_followup_artifacts,
 )
-from doc_workbench.config import WorkspacePaths
+from doc_workbench.config import VALID_ENGINES, WorkspacePaths, resolve_engine
 from doc_workbench.models import DownloadRow, MetadataScanRow
 from doc_workbench.observability.tracer import RunTrace, summarize_trace
 from doc_workbench.policy import load_context_policy, write_resolved_policy
 from doc_workbench.registry.document_registry import DocumentRegistry
 from doc_workbench.registry.metadata_scanner import scan_pdf
-from doc_workbench.review.workflow import build_review_rows, write_review_csv
+from doc_workbench.review.workflow import build_review_rows, build_review_rows_from_records, write_review_csv
 from doc_workbench.storage.downloader import download_bytes
 
 app = typer.Typer(help="Public document acquisition workbench.", no_args_is_help=True)
@@ -69,18 +70,45 @@ def discover(
     workspace_root: str | None = typer.Option(None, "--workspace-root"),
     followup_search: bool = typer.Option(False, "--followup-search/--no-followup-search"),
     policy_path: str | None = typer.Option(None, "--policy-path"),
+    engine: str | None = typer.Option(None, "--engine", help="Engine to use.", click_type=click.Choice(list(VALID_ENGINES))),
 ) -> None:
     paths = WorkspacePaths.resolve(workspace_root)
     paths.ensure()
     policy = load_context_policy(policy_path)
+    try:
+        selected_engine = resolve_engine(engine)
+    except ValueError as exc:
+        raise click.BadParameter(str(exc), param_hint="'--engine' / DOC_WORKBENCH_ENGINE") from exc
     output_dir, run_id = paths.new_run_dir("discover")
     tracer = RunTrace(trace_id=run_id, run_id=run_id, command="discover", policy_digest=policy.digest)
-    records = asyncio.run(_discover_all(load_entities(entities), followup_search=followup_search, policy=policy, tracer=tracer))
+
+    if selected_engine == "langgraph":
+        try:
+            from doc_workbench.orchestration.graph import run_graph
+        except ImportError as exc:
+            raise click.UsageError(
+                "The langgraph engine requires the '[orchestration]' optional extra.\n"
+                "Install it with:  pip install -e '.[orchestration]'"
+            ) from exc
+
+        entity_list = load_entities(entities)
+        final_state = run_graph(
+            entities=entity_list,
+            policy=policy,
+            tracer=tracer,
+            output_dir=output_dir,
+            followup_search=followup_search,
+        )
+        records = final_state.get("ranked_records") or final_state.get("discovery_records", [])
+    else:
+        records = asyncio.run(_discover_all(load_entities(entities), followup_search=followup_search, policy=policy, tracer=tracer))
+
     json_path, csv_path = write_discovery_artifacts(output_dir, records)
     ranking_trace_path = output_dir / "ranking_trace.json"
     ranking_trace_path.write_text(json.dumps(build_ranking_trace(records, policy), indent=2), encoding="utf-8")
     write_resolved_policy(output_dir / "resolved_policy.json", policy)
     trace_path = tracer.write(paths.traces_root / f"{run_id}.json")
+    console.print(f"Engine: {selected_engine}")
     console.print(f"Discovery JSON: {json_path}")
     console.print(f"Discovery summary: {csv_path}")
     console.print(f"Resolved policy: {output_dir / 'resolved_policy.json'}")
@@ -107,27 +135,64 @@ def review(
     input_path: Path = typer.Option(..., "--input"),
     workspace_root: str | None = typer.Option(None, "--workspace-root"),
     policy_path: str | None = typer.Option(None, "--policy-path"),
+    engine: str | None = typer.Option(None, "--engine", help="Engine to use.", click_type=click.Choice(list(VALID_ENGINES))),
 ) -> None:
     paths = WorkspacePaths.resolve(workspace_root)
     paths.ensure()
     policy = load_context_policy(policy_path)
+    try:
+        selected_engine = resolve_engine(engine)
+    except ValueError as exc:
+        raise click.BadParameter(str(exc), param_hint="'--engine' / DOC_WORKBENCH_ENGINE") from exc
     output_dir, run_id = paths.new_run_dir("review")
     tracer = RunTrace(trace_id=run_id, run_id=run_id, command="review", policy_digest=policy.digest)
-    rows, review_trace, recommendation_summary = build_review_rows(input_path, policy)
+
+    if selected_engine == "langgraph":
+        from doc_workbench.acquisition.followup.workflow import load_discovery_records as _load
+        from doc_workbench.orchestration.nodes import rank_node, review_prep_node
+        from doc_workbench.orchestration.state import WorkbenchState
+
+        records = _load(input_path)
+        # NOTE: review --engine langgraph calls rank_node + review_prep_node directly.
+        # It does NOT execute a compiled StateGraph — review operates on an existing
+        # discovery file, so running the full graph would redundantly re-run discover
+        # and followup stages.  The [orchestration] extra (langgraph package) is NOT
+        # required for this path; only doc_workbench.orchestration.nodes is imported.
+        rank_state: WorkbenchState = {
+            "entities": [],
+            "policy": policy,
+            "tracer": tracer,
+            "output_dir": output_dir,
+            "followup_search": False,
+            "followup_records": records,
+        }
+        rank_result = rank_node(rank_state)
+        review_state: WorkbenchState = {**rank_state, **rank_result}
+        result = review_prep_node(review_state)
+        rows = result["review_rows"]
+        review_trace = result["review_trace"]
+        recommendation_summary = result["recommendation_summary"]
+    else:
+        rows, review_trace, recommendation_summary = build_review_rows(input_path, policy)
+
     csv_path = write_review_csv(output_dir / "review_queue.csv", rows)
     review_trace_path = output_dir / "review_trace.json"
     review_trace_path.write_text(json.dumps(review_trace, indent=2), encoding="utf-8")
     write_resolved_policy(output_dir / "resolved_policy.json", policy)
-    tracer.add_span(
-        entity_id="all",
-        stage="review_queue_generation",
-        provider="review_policy",
-        latency_ms=0.0,
-        candidate_count_in=len(review_trace),
-        candidate_count_out=len(rows),
-        recommendation_summary=recommendation_summary,
-    )
+    # review_prep_node already emits this span (with real latency) in the
+    # langgraph path — only add it here for the legacy path to avoid doubling.
+    if selected_engine != "langgraph":
+        tracer.add_span(
+            entity_id="all",
+            stage="review_queue_generation",
+            provider="review_policy",
+            latency_ms=0.0,
+            candidate_count_in=len(review_trace),
+            candidate_count_out=len(rows),
+            recommendation_summary=recommendation_summary,
+        )
     trace_path = tracer.write(paths.traces_root / f"{run_id}.json")
+    console.print(f"Engine: {selected_engine}")
     console.print(f"Review queue: {csv_path}")
     console.print(f"Review trace: {review_trace_path}")
     console.print(f"Resolved policy: {output_dir / 'resolved_policy.json'}")
@@ -326,6 +391,29 @@ async def _followup_all(records: list, registry: DocumentRegistry, policy, trace
             }
         )
     return output
+
+
+@app.command("eval")
+def run_eval(
+    fixtures_dir: Path = typer.Option(None, "--fixtures-dir", help="Override fixture directory (default: bundled package fixtures)"),
+    report_path: Path = typer.Option(Path("evals/latest_report.json"), "--report-path"),
+) -> None:
+    """Run the eval harness against fixture cases and write a machine-readable report."""
+    from doc_workbench.evals.run_evals import FIXTURES_DIR as _DEFAULT_FIXTURES, run_evals
+
+    effective_fixtures = fixtures_dir if fixtures_dir is not None else _DEFAULT_FIXTURES
+    try:
+        report = run_evals(fixtures_dir=effective_fixtures, report_path=report_path)
+    except FileNotFoundError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--fixtures-dir") from exc
+    agg = report["aggregate"]
+    console.print(f"Evals: {agg['passed']}/{agg['total_cases']} passed  (pass_rate={agg['pass_rate']})")
+    console.print(f"Report written to: {report_path}")
+    if not agg["overall_passed"]:
+        for case in report["cases"]:
+            if not case["passed"]:
+                console.print(f"  FAIL  {case['entity_id']}  actual={case['actual']}  expected={case['expected']}")
+        raise typer.Exit(code=1)
 
 
 @app.command("scan")
