@@ -18,16 +18,14 @@ LangGraph execution path with safe opt-in observability.
 ## Architecture At A Glance
 
 ```mermaid
-graph LR
+graph TD
 
 subgraph INPUTS["Inputs"]
-  direction TB
   E["📥 Entity batch CSV"]:::bronze
   P["📘 Context policy"]:::external
 end
 
 subgraph PIPE["Pipeline stages"]
-  direction TB
   D["📥 Discover"]:::bronze
   F["🔄 Follow-up extraction"]:::silver
   R["🔄 Rank + dedupe + cap"]:::silver
@@ -38,7 +36,6 @@ subgraph PIPE["Pipeline stages"]
 end
 
 subgraph OUTPUTS["Artifacts and telemetry"]
-  direction TB
   O1["📄 Run outputs<br/>discover.json | review_queue.csv"]:::artifact
   O2["📄 Trace + policy<br/>ranking_trace.json | review_trace.json<br/>resolved_policy.json | workspace/traces/*.json"]:::artifact
   O3["📡 Optional telemetry + evals<br/>Langfuse | evals/latest_report.json"]:::external
