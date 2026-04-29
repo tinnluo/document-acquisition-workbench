@@ -13,22 +13,20 @@ module is skipped automatically when the package is absent so that a plain
 
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
-from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 
 # Skip this entire module if langgraph is not installed.
-langgraph = pytest.importorskip("langgraph", reason="langgraph not installed (install with .[orchestration])")
+pytest.importorskip("langgraph", reason="langgraph not installed (install with .[orchestration])")  # noqa: E402
 
-from doc_workbench.models import DiscoveryCandidate, DiscoveryRecord, EntityRecord
-from doc_workbench.observability.tracer import RunTrace
-from doc_workbench.orchestration.graph import _build_graph, run_graph
-from doc_workbench.orchestration.nodes import rank_node, review_prep_node
-from doc_workbench.orchestration.state import WorkbenchState
-from doc_workbench.policy import load_context_policy
+from doc_workbench.models import DiscoveryCandidate, DiscoveryRecord, EntityRecord  # noqa: E402
+from doc_workbench.observability.tracer import RunTrace  # noqa: E402
+from doc_workbench.orchestration.graph import _build_graph, run_graph  # noqa: E402
+from doc_workbench.orchestration.nodes import rank_node, review_prep_node  # noqa: E402
+from doc_workbench.orchestration.state import WorkbenchState  # noqa: E402
+from doc_workbench.policy import load_context_policy  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -65,7 +63,7 @@ def _make_candidate(entity: EntityRecord, url: str, confidence: float = 0.65, so
 def _make_record(entity: EntityRecord, candidates: list[DiscoveryCandidate] | None = None) -> DiscoveryRecord:
     if candidates is None:
         candidates = [
-            _make_candidate(entity, f"https://testcorp.example.com/annual-report-2023.pdf")
+            _make_candidate(entity, "https://testcorp.example.com/annual-report-2023.pdf")
         ]
     return DiscoveryRecord(entity=entity, status="success", candidates=candidates)
 

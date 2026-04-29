@@ -28,7 +28,7 @@ from doc_workbench.observability.tracer import RunTrace, summarize_trace
 from doc_workbench.policy import load_context_policy, write_resolved_policy
 from doc_workbench.registry.document_registry import DocumentRegistry
 from doc_workbench.registry.metadata_scanner import scan_pdf
-from doc_workbench.review.workflow import build_review_rows, build_review_rows_from_records, write_review_csv
+from doc_workbench.review.workflow import build_review_rows, write_review_csv
 from doc_workbench.storage.downloader import download_bytes
 
 app = typer.Typer(help="Public document acquisition workbench.", no_args_is_help=True)

@@ -23,7 +23,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from doc_workbench.evals.run_evals import FIXTURES_DIR, run_evals  # noqa: F401  (re-export for backwards compat)
+from doc_workbench.evals.run_evals import FIXTURES_DIR, run_evals  # noqa: F401,E402
 
 if __name__ == "__main__":
     from doc_workbench.evals.run_evals import main

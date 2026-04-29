@@ -10,8 +10,6 @@ Verifies that:
 
 from __future__ import annotations
 
-import os
-
 import pytest
 
 from doc_workbench.observability.langfuse_bridge import (
@@ -83,7 +81,7 @@ def test_reset_clears_cache(monkeypatch) -> None:
     monkeypatch.delenv("LANGFUSE_SECRET_KEY", raising=False)
     monkeypatch.delenv("LANGFUSE_PUBLIC_KEY", raising=False)
 
-    client_a = get_langfuse_client()
+    get_langfuse_client()
     reset_langfuse_client()
     client_b = get_langfuse_client()
     assert isinstance(client_b, _NoOpLangfuseClient)

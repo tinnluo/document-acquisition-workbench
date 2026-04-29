@@ -290,9 +290,6 @@ def rank_node(state: WorkbenchState) -> dict[str, Any]:
     tracer = state.get("tracer")
     lf = get_langfuse_client()
 
-    # Capture input candidate counts BEFORE any mutation.
-    total_candidates_in = sum(len(r.candidates) for r in records)
-
     ranked: list[DiscoveryRecord] = []
     per_record_ms: list[float] = []
 
@@ -320,8 +317,6 @@ def rank_node(state: WorkbenchState) -> dict[str, Any]:
             errors=list(record.errors),
         ))
         per_record_ms.append((time.perf_counter() - record_start) * 1000.0)
-
-    total_latency_ms = sum(per_record_ms)
 
     if tracer is not None:
         for orig_record, ranked_record, entity_ms in zip(records, ranked, per_record_ms):

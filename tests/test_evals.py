@@ -14,15 +14,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from doc_workbench.evals.run_evals import FIXTURES_DIR, run_evals
 
 
 def test_run_evals_writes_report(tmp_path: Path) -> None:
     """run_evals should write latest_report.json with the required schema."""
     report_path = tmp_path / "latest_report.json"
-    report = run_evals(fixtures_dir=FIXTURES_DIR, report_path=report_path)
+    run_evals(fixtures_dir=FIXTURES_DIR, report_path=report_path)
 
     assert report_path.exists(), "latest_report.json was not written"
 
