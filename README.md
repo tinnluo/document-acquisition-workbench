@@ -241,12 +241,18 @@ A separate execution policy governs what the runtime is *allowed to do*. The two
 The execution policy (`context/execution_policy.yaml`, bundled as `doc_workbench/context/execution_policy.yaml`) controls:
 
 - which command stages are permitted to run
-- which source domains may be fetched
-- whether downloads are enabled, and at what count / size / MIME-type limits
+- which source domains may be fetched (explicit allowlist — no wildcard default)
+- whether downloads are enabled, and at what count / size / MIME-type limits (`application/pdf` and `text/html` by default)
 - whether follow-up extraction is permitted
 - which path the registry may write to
 
 Enforcement is **deterministic and pre-action**: a `PolicyViolationError` is raised before any network call or registry write. Both the legacy path and the LangGraph path enforce the same execution policy — neither engine can bypass what the other enforces.
+
+Three enforcement invariants are worth calling out:
+
+- The download egress cap (`download.max_count`) is enforced against `fetch_attempt_count`, incremented *before* the network call, so repeated failed downloads cannot bypass the cap.
+- Boolean policy fields (`download.enabled`, `followup_search.enabled`) require real YAML booleans — quoted strings like `"false"` are rejected with a clear error rather than silently becoming truthy.
+- The registry dedupe loop verifies `payload["entity_id"] == entity_id` before reusing a cached artifact, so two entity IDs that sanitize to the same directory prefix cannot cross-wire each other's cache.
 
 The `discover`, `review`, `download`, and `followup-search` commands each write a `resolved_execution_policy.json` sidecar, so a reviewer can reconstruct the exact runtime constraints in force for that acquisition run. The `scan` and `eval` commands do not perform network acquisition and do not emit this sidecar.
 

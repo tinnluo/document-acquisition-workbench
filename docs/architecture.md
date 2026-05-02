@@ -231,16 +231,22 @@ The execution policy controls:
 
 | Dimension | Config key | Default |
 |---|---|---|
-| Allowed command stages | `allowed_command_stages` | all four stages |
-| Allowed source / domain families | `allowed_source_families` | `["*"]` (wildcard) |
+| Allowed command stages | `allowed_command_stages` | discover, review, download, followup-search, scan |
+| Allowed source / domain families | `allowed_source_families` | explicit allowlist of known public annual-report hosts (no wildcard) |
 | Download enabled | `download.enabled` | `true` |
 | Max downloads per run | `download.max_count` | 50 |
 | Max file size before registry write | `download.max_file_size_bytes` | 50 MB |
-| Allowed MIME types before registry write | `download.allowed_mime_types` | `["*"]` (wildcard) |
+| Allowed MIME types before registry write | `download.allowed_mime_types` | `["application/pdf", "text/html"]` |
 | Follow-up extraction permitted | `followup_search.enabled` | `true` |
 | Registry write location restriction | `registry.root_restriction` | `"registry"` |
 
 Enforcement is **deterministic and pre-action**: a `PolicyViolationError` is raised *before* any network call, fetch, or registry write. A blocked domain is rejected before the HTTP request is issued. An oversize file is rejected before `register_document()` is called.
+
+Three specific enforcement invariants worth noting:
+
+- **Egress cap on failures** — the download egress cap (`download.max_count`) is enforced against `fetch_attempt_count`, which is incremented *before* the network call. Repeated failed downloads (MIME rejection, network error) cannot bypass the cap by never successfully registering.
+- **Strict boolean policy parsing** — `download.enabled` and `followup_search.enabled` require real YAML booleans. Quoted strings like `"false"` are rejected with a clear error rather than silently becoming truthy, which would re-enable blocked features.
+- **Entity-ID collision guard** — the registry dedupe loop verifies `payload["entity_id"] == entity_id` before treating a cached manifest as a duplicate. Two distinct entity IDs that sanitize to the same directory prefix cannot cross-wire each other's artifact cache.
 
 Both the legacy path and the LangGraph path enforce the same execution policy. The `followup_node` in the LangGraph graph checks `exec_policy.followup_search.enabled` before any extraction runs, so neither engine can bypass what the other enforces.
 
