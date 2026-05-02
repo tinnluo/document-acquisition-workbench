@@ -146,6 +146,7 @@ The LangGraph path threads a shared `WorkbenchState` through all nodes.
 |---|---|---|
 | `entities` | caller | input entity records |
 | `policy` | caller | loaded `ContextPolicy` |
+| `exec_policy` | caller | loaded `ExecutionPolicy` (optional; governs runtime permissions) |
 | `tracer` | caller | local trace collector |
 | `output_dir` | caller | run-scoped artifact directory |
 | `followup_search` | caller | whether follow-up logic is enabled |
@@ -162,8 +163,9 @@ Artifact stability is one of the strongest architectural choices in the repo.
 
 | Stage | Primary artifacts | Why they exist |
 |---|---|---|
-| Discover | `discover.json`, `discover_summary.csv`, `ranking_trace.json`, `resolved_policy.json` | freeze candidate pool and ranking rationale |
-| Review | `review_queue.csv`, `review_trace.json`, `resolved_policy.json` | hand off a reviewable queue with recommendation reasons |
+| Discover | `discover.json`, `discover_summary.csv`, `ranking_trace.json`, `resolved_policy.json`, `resolved_execution_policy.json` | freeze candidate pool, ranking rationale, and runtime constraints |
+| Review | `review_queue.csv`, `review_trace.json`, `resolved_policy.json`, `resolved_execution_policy.json` | hand off a reviewable queue with recommendation reasons and policy record |
+| Download | `download_results.json`, `download_results.csv`, `resolved_execution_policy.json` | record of what was fetched and under which execution constraints |
 | Trace | `workspace/traces/{run_id}.json` | local execution record independent of remote telemetry |
 | Registry | `workspace/registry/*` | persistent downloaded-document state |
 | Eval | `evals/latest_report.json` | machine-readable regression report |
@@ -203,16 +205,46 @@ Remote Langfuse spans are produced only by the LangGraph path.
 
 ## Policy And Decisioning
 
+### Context policy
+
 The acquisition policy is bundled at `doc_workbench/context/context_policy.yaml` and loaded via `importlib.resources`, which means the runtime behavior is preserved after `pip install` without needing the source tree.
 
-That policy influences both discovery and review:
+That policy governs *acquisition strategy*:
 
 - source acquisition order
 - ranking boosts and penalties
 - recommendation thresholds
 - follow-up eligibility rules
 
-Every `discover` and `review` run writes a `resolved_policy.json` sidecar, so the exact policy used for a run is preserved next to the outputs.
+Every `discover`, `review`, and `followup-search` run writes a `resolved_policy.json` sidecar so the exact context policy used for a run is preserved next to the outputs.
+
+### Execution policy
+
+A separate policy layer — `doc_workbench/context/execution_policy.yaml` — governs *what the runtime is allowed to do*. These are two distinct concerns:
+
+| Policy | File | Governs |
+|---|---|---|
+| Context policy | `context_policy.yaml` | where to search, in what order |
+| Execution policy | `execution_policy.yaml` | what the runtime may fetch, write, and execute |
+
+The execution policy controls:
+
+| Dimension | Config key | Default |
+|---|---|---|
+| Allowed command stages | `allowed_command_stages` | all four stages |
+| Allowed source / domain families | `allowed_source_families` | `["*"]` (wildcard) |
+| Download enabled | `download.enabled` | `true` |
+| Max downloads per run | `download.max_count` | 50 |
+| Max file size before registry write | `download.max_file_size_bytes` | 50 MB |
+| Allowed MIME types before registry write | `download.allowed_mime_types` | `["*"]` (wildcard) |
+| Follow-up extraction permitted | `followup_search.enabled` | `true` |
+| Registry write location restriction | `registry.root_restriction` | `"registry"` |
+
+Enforcement is **deterministic and pre-action**: a `PolicyViolationError` is raised *before* any network call, fetch, or registry write. A blocked domain is rejected before the HTTP request is issued. An oversize file is rejected before `register_document()` is called.
+
+Both the legacy path and the LangGraph path enforce the same execution policy. The `followup_node` in the LangGraph graph checks `exec_policy.followup_search.enabled` before any extraction runs, so neither engine can bypass what the other enforces.
+
+Every `discover`, `review`, `download`, and `followup-search` run writes a `resolved_execution_policy.json` sidecar alongside `resolved_policy.json`, so a reviewer can reconstruct the exact constraints in force for any run.
 
 ## Provider Surface And Extension Points
 
@@ -258,11 +290,13 @@ This matters because a lot of portfolio demos look architectural only in a clone
 | LangGraph nodes | `doc_workbench/orchestration/nodes.py` |
 | compiled graph | `doc_workbench/orchestration/graph.py` |
 | CLI routing and command contract | `doc_workbench/cli.py` |
-| policy loading | `doc_workbench/policy.py` |
+| context policy loading | `doc_workbench/policy.py` |
+| execution policy loading and enforcement | `doc_workbench/execution_policy.py` |
 | review logic | `doc_workbench/review/workflow.py` |
 | local tracing | `doc_workbench/observability/tracer.py` |
 | Langfuse bridge | `doc_workbench/observability/langfuse_bridge.py` |
 | eval harness | `doc_workbench/evals/run_evals.py` |
+| hardened local runtime | `docs/hardened-runtime.md` |
 
 ## Summary
 
@@ -271,7 +305,8 @@ The architecture is intentionally boring in the right places:
 - explicit stages
 - explicit artifacts
 - explicit review boundary
+- explicit policy governance at two levels (context + execution)
 - explicit opt-in telemetry
 - explicit packaging of runtime data
 
-That is the point. The repo demonstrates an execution model that can evolve internally without creating downstream ambiguity.
+That is the point. The repo demonstrates an execution model that can evolve internally without creating downstream ambiguity, and where every runtime decision is governed by a policy that is itself preserved as a run artifact.

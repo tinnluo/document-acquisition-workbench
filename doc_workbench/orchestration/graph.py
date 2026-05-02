@@ -95,6 +95,7 @@ def run_graph(
     output_dir: Path,
     followup_search: bool = False,
     mode: str = "discover",
+    exec_policy: Any = None,
 ) -> WorkbenchState:
     """Run the acquisition graph and return the final state.
 
@@ -113,6 +114,9 @@ def run_graph(
     mode:
         ``"discover"`` (default) — stops after rank; no review_prep.
         ``"full"`` — runs all four nodes including review_prep.
+    exec_policy:
+        Optional ExecutionPolicy instance.  When provided, nodes enforce
+        execution-policy rules (e.g. followup_search.enabled) before acting.
 
     Returns
     -------
@@ -126,6 +130,7 @@ def run_graph(
     initial_state: WorkbenchState = {
         "entities": entities,
         "policy": policy,
+        "exec_policy": exec_policy,
         "tracer": tracer,
         "output_dir": output_dir,
         "followup_search": followup_search,

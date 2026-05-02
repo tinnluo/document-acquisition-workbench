@@ -7,8 +7,38 @@ from typing import Any
 from pypdf import PdfReader
 
 
-def scan_pdf(path: Path) -> dict[str, Any]:
-    reader = PdfReader(BytesIO(path.read_bytes()))
+def scan_pdf(path: Path, content_type: str = "application/pdf") -> dict[str, Any]:
+    """Scan *path* and return extracted metadata.
+
+    If *content_type* indicates a non-PDF artifact the scan is skipped and a
+    ``skipped`` status is returned so callers don't crash on HTML or binary
+    files that were legitimately stored under ``annual_reports``.
+    """
+    normalized_ct = (content_type or "").split(";")[0].strip().lower()
+    if "pdf" not in normalized_ct and not str(path).lower().endswith(".pdf"):
+        return {
+            "title": "",
+            "issuer_name": "",
+            "reporting_period": "",
+            "publication_date": "",
+            "page_count": None,
+            "modality": "non_pdf",
+            "status": "skipped",
+            "error": f"scan skipped: content_type={content_type!r} is not PDF",
+        }
+    try:
+        reader = PdfReader(BytesIO(path.read_bytes()))
+    except Exception as exc:
+        return {
+            "title": "",
+            "issuer_name": "",
+            "reporting_period": "",
+            "publication_date": "",
+            "page_count": None,
+            "modality": "unknown",
+            "status": "error",
+            "error": f"{type(exc).__name__}: {exc}",
+        }
     metadata = reader.metadata or {}
     first_page_text = ""
     if reader.pages:

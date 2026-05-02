@@ -8,13 +8,14 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
-import httpx
 from bs4 import BeautifulSoup
 
 from doc_workbench.acquisition.followup.workflow import run_followup_for_candidates
+from doc_workbench.http_utils import safe_get
 from doc_workbench.models import DiscoveryCandidate, DiscoveryRecord, EntityRecord
 from doc_workbench.observability.tracer import RunTrace
 from doc_workbench.policy import ContextPolicy
+from doc_workbench.execution_policy import PolicyViolationError
 from doc_workbench.providers.regulatory_filings import RegulatoryFilingsProvider
 from doc_workbench.providers.search import get_search_provider
 
@@ -155,17 +156,18 @@ def _followup_allowed(
     return True, "enabled"
 
 
-async def _discover_official_site(entity: EntityRecord, policy: ContextPolicy) -> list[DiscoveryCandidate]:
+async def _discover_official_site(entity: EntityRecord, policy: ContextPolicy, exec_policy: object = None) -> list[DiscoveryCandidate]:
     official_url = _normalize_official_url(entity.official_website)
     if not official_url:
         return []
-    async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
-        response = await client.get(official_url)
-        response.raise_for_status()
-    soup = BeautifulSoup(response.text, "html.parser")
+    # Enforce domain before the first request and at every redirect hop.
+    # safe_get uses follow_redirects=False and calls enforce_domain per hop.
+    content_bytes, _ct, final_url = await safe_get(official_url, exec_policy=exec_policy, timeout=20.0)
+    html_text = content_bytes.decode("utf-8", errors="ignore")
+    soup = BeautifulSoup(html_text, "html.parser")
     candidates: list[DiscoveryCandidate] = []
     for anchor in soup.find_all("a", href=True):
-        href = urljoin(str(response.url), anchor["href"])
+        href = urljoin(final_url, anchor["href"])
         title = " ".join(anchor.stripped_strings)
         if not _same_domain(href, official_url):
             continue
@@ -193,10 +195,10 @@ async def _discover_official_site(entity: EntityRecord, policy: ContextPolicy) -
     return sorted(deduped.values(), key=lambda item: item.confidence, reverse=True)[:10]
 
 
-async def _discover_search_results(entity: EntityRecord, policy: ContextPolicy) -> list[DiscoveryCandidate]:
+async def _discover_search_results(entity: EntityRecord, policy: ContextPolicy, exec_policy: object = None) -> list[DiscoveryCandidate]:
     provider = get_search_provider()
     query = f"{entity.name} annual report pdf investor relations"
-    results = await provider.search(query, max_results=5)
+    results = await provider.search(query, max_results=5, exec_policy=exec_policy)
     candidates: list[DiscoveryCandidate] = []
     for result in results:
         tier = "search_same_domain" if _same_domain(result.url, entity.official_website) else "search_fallback"
@@ -226,6 +228,7 @@ async def discover_entity(
     tracer: RunTrace | None = None,
     _skip_ranking: bool = False,
     _force_skip_followup: bool = False,
+    exec_policy: object = None,
 ) -> DiscoveryRecord:
     """Discover annual-report candidates for a single entity.
 
@@ -252,7 +255,9 @@ async def discover_entity(
 
     official_start = time.perf_counter()
     try:
-        official_candidates = await _discover_official_site(entity, policy)
+        official_candidates = await _discover_official_site(entity, policy, exec_policy=exec_policy)
+    except PolicyViolationError:
+        raise
     except Exception as exc:
         official_candidates = []
         errors.append(f"official_site:{type(exc).__name__}")
@@ -271,7 +276,7 @@ async def discover_entity(
 
     regulatory_start = time.perf_counter()
     try:
-        regulatory_raw = await RegulatoryFilingsProvider().discover(entity)
+        regulatory_raw = await RegulatoryFilingsProvider().discover(entity, exec_policy=exec_policy)
         regulatory_candidates = [
             DiscoveryCandidate(
                 entity_id=entity.entity_id,
@@ -288,6 +293,8 @@ async def discover_entity(
             )
             for row in regulatory_raw
         ]
+    except PolicyViolationError:
+        raise
     except Exception as exc:
         regulatory_candidates = []
         errors.append(f"regulatory_filings:{type(exc).__name__}")
@@ -306,7 +313,9 @@ async def discover_entity(
 
     search_start = time.perf_counter()
     try:
-        search_candidates = await _discover_search_results(entity, policy)
+        search_candidates = await _discover_search_results(entity, policy, exec_policy=exec_policy)
+    except PolicyViolationError:
+        raise
     except Exception as exc:
         search_candidates = []
         errors.append(f"search:{type(exc).__name__}")
@@ -345,9 +354,12 @@ async def discover_entity(
                 ],
                 materialize=False,
                 registry=None,
+                exec_policy=exec_policy,
             )
+        except PolicyViolationError:
+            raise
         except Exception as exc:
-            errors.append(f"followup_search:{type(exc).__name__}")
+            errors.append(f"followup_search:{type(exc).__name__}: {exc}")
     if tracer is not None and not _force_skip_followup:
         # Suppress this span in the LangGraph path — followup_node owns the
         # authoritative followup_extraction span there.

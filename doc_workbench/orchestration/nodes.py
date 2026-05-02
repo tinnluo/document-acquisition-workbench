@@ -24,7 +24,7 @@ from doc_workbench.observability.langfuse_bridge import get_langfuse_client
 from doc_workbench.orchestration.state import WorkbenchState
 from doc_workbench.policy import ContextPolicy
 from doc_workbench.review.workflow import build_review_rows_from_records
-
+from doc_workbench.execution_policy import PolicyViolationError, enforce_followup_search
 
 
 # ---------------------------------------------------------------------------
@@ -84,11 +84,14 @@ def discover_node(state: WorkbenchState) -> dict[str, Any]:
     tracer = state.get("tracer")
     lf = get_langfuse_client()
 
+    exec_policy = state.get("exec_policy")
+
     async def _run_one(entity: Any) -> tuple[DiscoveryRecord, float]:
         t0 = time.perf_counter()
         record = await discover_entity(
             entity, followup_search=False, policy=policy, tracer=tracer,
             _skip_ranking=True, _force_skip_followup=True,
+            exec_policy=exec_policy,
         )
         return record, (time.perf_counter() - t0) * 1000.0
 
@@ -146,12 +149,23 @@ def followup_node(state: WorkbenchState) -> dict[str, Any]:
     Enriches each DiscoveryRecord's candidate list with promoted follow-up
     candidates.  Produces followup_records (copy of discovery_records with
     followup candidates appended).
+
+    Respects execution policy: if ``exec_policy.followup_search.enabled`` is
+    ``False``, the node raises ``PolicyViolationError`` before any extraction.
     """
     records: list[DiscoveryRecord] = state.get("discovery_records", [])
     policy: ContextPolicy = state["policy"]
+    exec_policy = state.get("exec_policy")
     followup_search: bool = state.get("followup_search", False)
     tracer = state.get("tracer")
     lf = get_langfuse_client()
+
+    # Execution-policy enforcement: only enforce followup_search.enabled when
+    # follow-up was actually requested. Enforcing unconditionally would cause
+    # "discover --no-followup-search" with a policy that disables follow-up to
+    # fail, while the legacy path succeeds (behaviour mismatch).
+    if exec_policy is not None and followup_search:
+        enforce_followup_search(exec_policy)
 
     enriched: list[DiscoveryRecord] = []
 
@@ -188,10 +202,12 @@ def followup_node(state: WorkbenchState) -> dict[str, Any]:
         errors: list[str] = list(record.errors)
         try:
             _results, promoted = await run_followup_for_candidates(
-                record.entity, seeds, materialize=False, registry=None
+                record.entity, seeds, materialize=False, registry=None, exec_policy=exec_policy
             )
+        except PolicyViolationError:
+            raise
         except Exception as exc:
-            errors.append(f"followup_node:{type(exc).__name__}")
+            errors.append(f"followup_node:{type(exc).__name__}: {exc}")
             return DiscoveryRecord(
                 entity=record.entity,
                 status=record.status,

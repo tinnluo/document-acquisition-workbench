@@ -25,6 +25,15 @@ from doc_workbench.acquisition.followup.workflow import (
 from doc_workbench.config import VALID_ENGINES, WorkspacePaths, resolve_engine
 from doc_workbench.models import DownloadRow, MetadataScanRow
 from doc_workbench.observability.tracer import RunTrace, summarize_trace
+from doc_workbench.execution_policy import (
+    PolicyViolationError,
+    load_execution_policy,
+    write_resolved_execution_policy,
+    enforce_command_stage,
+    enforce_file_size,
+    enforce_followup_search,
+    enforce_registry_root,
+)
 from doc_workbench.policy import load_context_policy, write_resolved_policy
 from doc_workbench.registry.document_registry import DocumentRegistry
 from doc_workbench.registry.metadata_scanner import scan_pdf
@@ -33,6 +42,25 @@ from doc_workbench.storage.downloader import download_bytes
 
 app = typer.Typer(help="Public document acquisition workbench.", no_args_is_help=True)
 console = Console()
+
+
+def _policy_guard() -> "contextlib.AbstractContextManager[None]":
+    """Context manager that catches PolicyViolationError and exits with code 2.
+
+    Wrap every command body with this so all commands emit a consistent,
+    machine-readable signal on policy denial instead of an unhandled traceback.
+    """
+    import contextlib
+
+    @contextlib.contextmanager
+    def _cm():  # type: ignore[return]
+        try:
+            yield
+        except PolicyViolationError as exc:
+            console.print(f"[red]Policy violation: {exc}[/red]")
+            raise typer.Exit(code=2) from exc
+
+    return _cm()
 
 
 @app.command("paths")
@@ -70,53 +98,69 @@ def discover(
     workspace_root: str | None = typer.Option(None, "--workspace-root"),
     followup_search: bool = typer.Option(False, "--followup-search/--no-followup-search"),
     policy_path: str | None = typer.Option(None, "--policy-path"),
+    execution_policy_path: str | None = typer.Option(None, "--execution-policy-path"),
     engine: str | None = typer.Option(None, "--engine", help="Engine to use.", click_type=click.Choice(list(VALID_ENGINES))),
 ) -> None:
-    paths = WorkspacePaths.resolve(workspace_root)
-    paths.ensure()
-    policy = load_context_policy(policy_path)
-    try:
-        selected_engine = resolve_engine(engine)
-    except ValueError as exc:
-        raise click.BadParameter(str(exc), param_hint="'--engine' / DOC_WORKBENCH_ENGINE") from exc
-    output_dir, run_id = paths.new_run_dir("discover")
-    tracer = RunTrace(trace_id=run_id, run_id=run_id, command="discover", policy_digest=policy.digest)
-
-    if selected_engine == "langgraph":
+    with _policy_guard():
+        paths = WorkspacePaths.resolve(workspace_root)
+        paths.ensure()
+        policy = load_context_policy(policy_path)
+        exec_policy = load_execution_policy(execution_policy_path)
+        enforce_command_stage(exec_policy, "discover")
+        # If follow-up is requested, enforce execution policy before any work
+        # begins. This applies to both the legacy and LangGraph paths so neither
+        # engine can bypass what the other enforces.
+        # followup-search also fetches and materializes seed documents, so
+        # download.enabled must be checked here as well as in followup_search cmd.
+        if followup_search:
+            enforce_followup_search(exec_policy)
+            from doc_workbench.execution_policy import enforce_download_enabled
+            enforce_download_enabled(exec_policy)
         try:
-            from doc_workbench.orchestration.graph import run_graph
-        except ImportError as exc:
-            raise click.UsageError(
-                "The langgraph engine requires the '[orchestration]' optional extra.\n"
-                "Install it with:  pip install -e '.[orchestration]'"
-            ) from exc
+            selected_engine = resolve_engine(engine)
+        except ValueError as exc:
+            raise click.BadParameter(str(exc), param_hint="'--engine' / DOC_WORKBENCH_ENGINE") from exc
+        output_dir, run_id = paths.new_run_dir("discover")
+        tracer = RunTrace(trace_id=run_id, run_id=run_id, command="discover", policy_digest=policy.digest, exec_policy_digest=exec_policy.digest)
 
-        entity_list = load_entities(entities)
-        final_state = run_graph(
-            entities=entity_list,
-            policy=policy,
-            tracer=tracer,
-            output_dir=output_dir,
-            followup_search=followup_search,
-        )
-        records = final_state.get("ranked_records") or final_state.get("discovery_records", [])
-    else:
-        records = asyncio.run(_discover_all(load_entities(entities), followup_search=followup_search, policy=policy, tracer=tracer))
+        if selected_engine == "langgraph":
+            try:
+                from doc_workbench.orchestration.graph import run_graph
+            except ImportError as exc:
+                raise click.UsageError(
+                    "The langgraph engine requires the '[orchestration]' optional extra.\n"
+                    "Install it with:  pip install -e '.[orchestration]'"
+                ) from exc
 
-    json_path, csv_path = write_discovery_artifacts(output_dir, records)
-    ranking_trace_path = output_dir / "ranking_trace.json"
-    ranking_trace_path.write_text(json.dumps(build_ranking_trace(records, policy), indent=2), encoding="utf-8")
-    write_resolved_policy(output_dir / "resolved_policy.json", policy)
-    trace_path = tracer.write(paths.traces_root / f"{run_id}.json")
-    console.print(f"Engine: {selected_engine}")
-    console.print(f"Discovery JSON: {json_path}")
-    console.print(f"Discovery summary: {csv_path}")
-    console.print(f"Resolved policy: {output_dir / 'resolved_policy.json'}")
-    console.print(f"Ranking trace: {ranking_trace_path}")
-    console.print(f"Trace file: {trace_path}")
+            entity_list = load_entities(entities)
+            final_state = run_graph(
+                entities=entity_list,
+                policy=policy,
+                tracer=tracer,
+                output_dir=output_dir,
+                followup_search=followup_search,
+                exec_policy=exec_policy,
+            )
+            records = final_state.get("ranked_records") or final_state.get("discovery_records", [])
+        else:
+            records = asyncio.run(_discover_all(load_entities(entities), followup_search=followup_search, policy=policy, tracer=tracer, exec_policy=exec_policy))
+
+        json_path, csv_path = write_discovery_artifacts(output_dir, records)
+        ranking_trace_path = output_dir / "ranking_trace.json"
+        ranking_trace_path.write_text(json.dumps(build_ranking_trace(records, policy), indent=2), encoding="utf-8")
+        write_resolved_policy(output_dir / "resolved_policy.json", policy)
+        write_resolved_execution_policy(output_dir / "resolved_execution_policy.json", exec_policy)
+        trace_path = tracer.write(paths.traces_root / f"{run_id}.json")
+        console.print(f"Engine: {selected_engine}")
+        console.print(f"Discovery JSON: {json_path}")
+        console.print(f"Discovery summary: {csv_path}")
+        console.print(f"Resolved policy: {output_dir / 'resolved_policy.json'}")
+        console.print(f"Resolved execution policy: {output_dir / 'resolved_execution_policy.json'}")
+        console.print(f"Ranking trace: {ranking_trace_path}")
+        console.print(f"Trace file: {trace_path}")
 
 
-async def _discover_all(entities: list, *, followup_search: bool, policy, tracer: RunTrace) -> list:
+async def _discover_all(entities: list, *, followup_search: bool, policy, tracer: RunTrace, exec_policy=None) -> list:
     records = []
     for entity in entities:
         records.append(
@@ -125,6 +169,7 @@ async def _discover_all(entities: list, *, followup_search: bool, policy, tracer
                 followup_search=followup_search,
                 policy=policy,
                 tracer=tracer,
+                exec_policy=exec_policy,
             )
         )
     return records
@@ -135,107 +180,151 @@ def review(
     input_path: Path = typer.Option(..., "--input"),
     workspace_root: str | None = typer.Option(None, "--workspace-root"),
     policy_path: str | None = typer.Option(None, "--policy-path"),
+    execution_policy_path: str | None = typer.Option(None, "--execution-policy-path"),
     engine: str | None = typer.Option(None, "--engine", help="Engine to use.", click_type=click.Choice(list(VALID_ENGINES))),
 ) -> None:
-    paths = WorkspacePaths.resolve(workspace_root)
-    paths.ensure()
-    policy = load_context_policy(policy_path)
-    try:
-        selected_engine = resolve_engine(engine)
-    except ValueError as exc:
-        raise click.BadParameter(str(exc), param_hint="'--engine' / DOC_WORKBENCH_ENGINE") from exc
-    output_dir, run_id = paths.new_run_dir("review")
-    tracer = RunTrace(trace_id=run_id, run_id=run_id, command="review", policy_digest=policy.digest)
+    with _policy_guard():
+        paths = WorkspacePaths.resolve(workspace_root)
+        paths.ensure()
+        policy = load_context_policy(policy_path)
+        exec_policy = load_execution_policy(execution_policy_path)
+        enforce_command_stage(exec_policy, "review")
+        try:
+            selected_engine = resolve_engine(engine)
+        except ValueError as exc:
+            raise click.BadParameter(str(exc), param_hint="'--engine' / DOC_WORKBENCH_ENGINE") from exc
+        output_dir, run_id = paths.new_run_dir("review")
+        tracer = RunTrace(trace_id=run_id, run_id=run_id, command="review", policy_digest=policy.digest, exec_policy_digest=exec_policy.digest)
 
-    if selected_engine == "langgraph":
-        from doc_workbench.acquisition.followup.workflow import load_discovery_records as _load
-        from doc_workbench.orchestration.nodes import rank_node, review_prep_node
-        from doc_workbench.orchestration.state import WorkbenchState
+        if selected_engine == "langgraph":
+            from doc_workbench.acquisition.followup.workflow import load_discovery_records as _load
+            from doc_workbench.orchestration.nodes import rank_node, review_prep_node
+            from doc_workbench.orchestration.state import WorkbenchState
 
-        records = _load(input_path)
-        # NOTE: review --engine langgraph calls rank_node + review_prep_node directly.
-        # It does NOT execute a compiled StateGraph — review operates on an existing
-        # discovery file, so running the full graph would redundantly re-run discover
-        # and followup stages.  The [orchestration] extra (langgraph package) is NOT
-        # required for this path; only doc_workbench.orchestration.nodes is imported.
-        rank_state: WorkbenchState = {
-            "entities": [],
-            "policy": policy,
-            "tracer": tracer,
-            "output_dir": output_dir,
-            "followup_search": False,
-            "followup_records": records,
-        }
-        rank_result = rank_node(rank_state)
-        review_state: WorkbenchState = {**rank_state, **rank_result}
-        result = review_prep_node(review_state)
-        rows = result["review_rows"]
-        review_trace = result["review_trace"]
-        recommendation_summary = result["recommendation_summary"]
-    else:
-        rows, review_trace, recommendation_summary = build_review_rows(input_path, policy)
+            records = _load(input_path)
+            # NOTE: review --engine langgraph calls rank_node + review_prep_node directly.
+            # It does NOT execute a compiled StateGraph — review operates on an existing
+            # discovery file, so running the full graph would redundantly re-run discover
+            # and followup stages.  The [orchestration] extra (langgraph package) is NOT
+            # required for this path; only doc_workbench.orchestration.nodes is imported.
+            rank_state: WorkbenchState = {
+                "entities": [],
+                "policy": policy,
+                "exec_policy": exec_policy,
+                "tracer": tracer,
+                "output_dir": output_dir,
+                "followup_search": False,
+                "followup_records": records,
+            }
+            rank_result = rank_node(rank_state)
+            review_state: WorkbenchState = {**rank_state, **rank_result}
+            result = review_prep_node(review_state)
+            rows = result["review_rows"]
+            review_trace = result["review_trace"]
+            recommendation_summary = result["recommendation_summary"]
+        else:
+            rows, review_trace, recommendation_summary = build_review_rows(input_path, policy)
 
-    csv_path = write_review_csv(output_dir / "review_queue.csv", rows)
-    review_trace_path = output_dir / "review_trace.json"
-    review_trace_path.write_text(json.dumps(review_trace, indent=2), encoding="utf-8")
-    write_resolved_policy(output_dir / "resolved_policy.json", policy)
-    # review_prep_node already emits this span (with real latency) in the
-    # langgraph path — only add it here for the legacy path to avoid doubling.
-    if selected_engine != "langgraph":
-        tracer.add_span(
-            entity_id="all",
-            stage="review_queue_generation",
-            provider="review_policy",
-            latency_ms=0.0,
-            candidate_count_in=len(review_trace),
-            candidate_count_out=len(rows),
-            recommendation_summary=recommendation_summary,
-        )
-    trace_path = tracer.write(paths.traces_root / f"{run_id}.json")
-    console.print(f"Engine: {selected_engine}")
-    console.print(f"Review queue: {csv_path}")
-    console.print(f"Review trace: {review_trace_path}")
-    console.print(f"Resolved policy: {output_dir / 'resolved_policy.json'}")
-    console.print(f"Trace file: {trace_path}")
+        csv_path = write_review_csv(output_dir / "review_queue.csv", rows)
+        review_trace_path = output_dir / "review_trace.json"
+        review_trace_path.write_text(json.dumps(review_trace, indent=2), encoding="utf-8")
+        write_resolved_policy(output_dir / "resolved_policy.json", policy)
+        write_resolved_execution_policy(output_dir / "resolved_execution_policy.json", exec_policy)
+        # review_prep_node already emits this span (with real latency) in the
+        # langgraph path — only add it here for the legacy path to avoid doubling.
+        if selected_engine != "langgraph":
+            tracer.add_span(
+                entity_id="all",
+                stage="review_queue_generation",
+                provider="review_policy",
+                latency_ms=0.0,
+                candidate_count_in=len(review_trace),
+                candidate_count_out=len(rows),
+                recommendation_summary=recommendation_summary,
+            )
+        trace_path = tracer.write(paths.traces_root / f"{run_id}.json")
+        console.print(f"Engine: {selected_engine}")
+        console.print(f"Review queue: {csv_path}")
+        console.print(f"Review trace: {review_trace_path}")
+        console.print(f"Resolved policy: {output_dir / 'resolved_policy.json'}")
+        console.print(f"Resolved execution policy: {output_dir / 'resolved_execution_policy.json'}")
+        console.print(f"Trace file: {trace_path}")
 
 
 @app.command("download")
 def download(
     input_path: Path = typer.Option(..., "--input"),
     workspace_root: str | None = typer.Option(None, "--workspace-root"),
+    execution_policy_path: str | None = typer.Option(None, "--execution-policy-path"),
 ) -> None:
-    paths = WorkspacePaths.resolve(workspace_root)
-    paths.ensure()
-    output_dir, run_id = paths.new_run_dir("download")
-    tracer = RunTrace(trace_id=run_id, run_id=run_id, command="download", policy_digest="")
-    registry = DocumentRegistry(paths.registry_root)
-    start = time.perf_counter()
-    rows = asyncio.run(_download_from_review(input_path, registry))
-    json_path = output_dir / "download_results.json"
-    csv_path = output_dir / "download_results.csv"
-    json_path.write_text(json.dumps([row.to_dict() for row in rows], indent=2), encoding="utf-8")
-    with csv_path.open("w", encoding="utf-8", newline="") as handle:
-        fieldnames = ["document_id", "entity_id", "entity_name", "url", "local_path", "byte_size", "is_duplicate", "status", "error"]
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
-        writer.writeheader()
-        for row in rows:
-            writer.writerow(row.to_dict())
-    tracer.add_span(
-        entity_id="all",
-        stage="download_documents",
-        provider="registry_downloader",
-        latency_ms=(time.perf_counter() - start) * 1000.0,
-        candidate_count_in=len(rows),
-        candidate_count_out=sum(1 for row in rows if row.status == "complete"),
+    with _policy_guard():
+        paths = WorkspacePaths.resolve(workspace_root)
+        paths.ensure()
+        exec_policy = load_execution_policy(execution_policy_path)
+        enforce_command_stage(exec_policy, "download")
+        output_dir, run_id = paths.new_run_dir("download")
+        tracer = RunTrace(trace_id=run_id, run_id=run_id, command="download", policy_digest="", exec_policy_digest=exec_policy.digest)
+        registry = DocumentRegistry(paths.registry_root, exec_policy=exec_policy)
+        start = time.perf_counter()
+        rows = asyncio.run(_download_from_review(input_path, registry, exec_policy, paths.registry_root))
+        json_path = output_dir / "download_results.json"
+        csv_path = output_dir / "download_results.csv"
+        json_path.write_text(json.dumps([row.to_dict() for row in rows], indent=2), encoding="utf-8")
+        with csv_path.open("w", encoding="utf-8", newline="") as handle:
+            fieldnames = ["document_id", "entity_id", "entity_name", "url", "local_path", "byte_size", "is_duplicate", "status", "error"]
+            writer = csv.DictWriter(handle, fieldnames=fieldnames)
+            writer.writeheader()
+            for row in rows:
+                writer.writerow(row.to_dict())
+        tracer.add_span(
+            entity_id="all",
+            stage="download_documents",
+            provider="registry_downloader",
+            latency_ms=(time.perf_counter() - start) * 1000.0,
+            candidate_count_in=len(rows),
+            candidate_count_out=sum(1 for row in rows if row.status == "complete"),
+        )
+        trace_path = tracer.write(paths.traces_root / f"{run_id}.json")
+        write_resolved_execution_policy(output_dir / "resolved_execution_policy.json", exec_policy)
+        console.print(f"Download results: {json_path}")
+        console.print(f"Registry root: {paths.registry_root}")
+        console.print(f"Resolved execution policy: {output_dir / 'resolved_execution_policy.json'}")
+        console.print(f"Trace file: {trace_path}")
+        failed = [r for r in rows if r.status == "failed"]
+        if failed:
+            console.print(
+                f"[red]Error: {len(failed)} row(s) failed during download.[/red]"
+            )
+            raise typer.Exit(code=1)
+
+
+async def _download_from_review(
+    input_path: Path,
+    registry: DocumentRegistry,
+    exec_policy: "ExecutionPolicy | None" = None,
+    registry_root: "Path | None" = None,
+) -> list[DownloadRow]:
+    from doc_workbench.execution_policy import (
+        ExecutionPolicy,
+        enforce_domain,
+        enforce_download_enabled,
+        enforce_download_count,
+        enforce_file_size,
+        enforce_mime_type,
+        enforce_registry_root,
     )
-    trace_path = tracer.write(paths.traces_root / f"{run_id}.json")
-    console.print(f"Download results: {json_path}")
-    console.print(f"Registry root: {paths.registry_root}")
-    console.print(f"Trace file: {trace_path}")
 
-
-async def _download_from_review(input_path: Path, registry: DocumentRegistry) -> list[DownloadRow]:
     rows: list[DownloadRow] = []
+    download_count = 0
+    # fetch_attempt_count tracks every outbound network request attempted,
+    # including those that ultimately fail (MIME reject, size limit, I/O error).
+    # Using download_count (incremented only on success) would allow unbounded
+    # outbound requests on repeated failures, bypassing the egress cap.
+    fetch_attempt_count = 0
+
+    if exec_policy is not None:
+        enforce_download_enabled(exec_policy)
+
     with input_path.open("r", encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle)
         for row in reader:
@@ -243,11 +332,43 @@ async def _download_from_review(input_path: Path, registry: DocumentRegistry) ->
                 continue
             url = str(row.get("url") or "")
             try:
+                if exec_policy is not None:
+                    enforce_domain(exec_policy, url)
+
                 existing_followup_id = str(row.get("followup_target_document_id") or "").strip()
                 existing_manifest = registry.get_manifest(existing_followup_id) if existing_followup_id else None
                 if existing_manifest is not None:
+                    # Guard: verify the cached manifest actually belongs to the
+                    # approved row before reusing its bytes.  A tampered or stale
+                    # review CSV must not be able to promote an unrelated artifact.
+                    row_entity_id = str(row.get("entity_id") or "").strip()
+                    row_url = url.strip()
+                    manifest_entity = str(existing_manifest.get("entity_id") or "").strip()
+                    manifest_source = str(existing_manifest.get("source_url") or "").strip()
+                    manifest_parent = str(existing_manifest.get("source_parent_document_id") or "").strip()
+                    if manifest_entity != row_entity_id or (
+                        manifest_source != row_url and manifest_parent not in (row_url, existing_followup_id)
+                    ):
+                        # Provenance mismatch — fall through to a direct fetch of
+                        # the approved URL instead of reusing the cached artifact.
+                        existing_manifest = None
+                if existing_manifest is not None:
                     local_path = Path(str(existing_manifest["local_path"]))
+                    content_type = str(existing_manifest.get("content_type") or "application/pdf")
+                    # 1. Validate path is inside registry root BEFORE any I/O.
+                    if exec_policy is not None and registry_root is not None:
+                        enforce_registry_root(exec_policy, local_path, registry_root.parent)
+                    # 2. Check file size via stat() BEFORE loading into memory to
+                    #    prevent an unbounded read from a large in-registry file.
+                    if exec_policy is not None:
+                        enforce_file_size(exec_policy, local_path.stat().st_size, url)
+                        enforce_mime_type(exec_policy, content_type, url)
                     pdf_bytes = local_path.read_bytes()
+                    # Only promote to "final" for confirmed PDF content — same rule
+                    # as register_document() — so reused HTML/binary follow-up
+                    # artifacts cannot bypass the promotion guard.
+                    is_pdf = "pdf" in content_type.lower()
+                    reuse_stage = "final" if is_pdf else "pre_review"
                     registration = registry.register_artifact(
                         entity_id=str(row.get("entity_id") or ""),
                         entity_name=str(row.get("entity_name") or ""),
@@ -257,15 +378,26 @@ async def _download_from_review(input_path: Path, registry: DocumentRegistry) ->
                         year=str(row.get("year") or "unknown"),
                         content_bytes=pdf_bytes,
                         extension=local_path.suffix or ".pdf",
-                        content_type=str(existing_manifest.get("content_type") or "application/pdf"),
-                        stage="final",
+                        content_type=content_type,
+                        stage=reuse_stage,
                         source_parent_document_id=str(existing_manifest.get("document_id") or ""),
                         parsed=dict(existing_manifest.get("parsed") or {}),
                         metadata=dict(existing_manifest.get("metadata") or {}),
                         dedupe_scope="family",
                     )
                 else:
-                    pdf_bytes = await download_bytes(url)
+                    # Enforce egress cap BEFORE the network call and count the
+                    # attempt regardless of outcome, so repeated failures cannot
+                    # bypass download.max_count by never successfully registering.
+                    if exec_policy is not None:
+                        enforce_download_count(exec_policy, fetch_attempt_count)
+                    fetch_attempt_count += 1
+                    # Pass exec_policy so download_bytes → safe_get enforces
+                    # domain at every redirect hop before data is transferred.
+                    pdf_bytes, content_type, final_url = await download_bytes(url, exec_policy=exec_policy)
+                    if exec_policy is not None:
+                        enforce_file_size(exec_policy, len(pdf_bytes), final_url)
+                        enforce_mime_type(exec_policy, content_type, final_url)
                     registration = registry.register_document(
                         entity_id=str(row.get("entity_id") or ""),
                         entity_name=str(row.get("entity_name") or ""),
@@ -274,7 +406,9 @@ async def _download_from_review(input_path: Path, registry: DocumentRegistry) ->
                         doc_type=str(row.get("candidate_kind") or "document"),
                         year=str(row.get("year") or "unknown"),
                         pdf_bytes=pdf_bytes,
+                        content_type=content_type,
                     )
+                download_count += 1
                 rows.append(
                     DownloadRow(
                         document_id=registration.document_id,
@@ -287,6 +421,10 @@ async def _download_from_review(input_path: Path, registry: DocumentRegistry) ->
                         status="complete",
                     )
                 )
+            except PolicyViolationError:
+                # Abort the entire download run immediately — do not accumulate
+                # more registry writes after a policy denial.
+                raise
             except Exception as exc:
                 rows.append(
                     DownloadRow(
@@ -309,37 +447,48 @@ def followup_search(
     input_path: Path = typer.Option(..., "--input"),
     workspace_root: str | None = typer.Option(None, "--workspace-root"),
     policy_path: str | None = typer.Option(None, "--policy-path"),
+    execution_policy_path: str | None = typer.Option(None, "--execution-policy-path"),
 ) -> None:
-    paths = WorkspacePaths.resolve(workspace_root)
-    paths.ensure()
-    policy = load_context_policy(policy_path)
-    registry = DocumentRegistry(paths.registry_root)
-    output_dir, run_id = paths.new_run_dir("followup_search")
-    tracer = RunTrace(trace_id=run_id, run_id=run_id, command="followup-search", policy_digest=policy.digest)
-    records = load_discovery_records(input_path)
-    results_by_entity: dict[str, list] = {}
-    promoted_candidates = []
-    enriched_records = []
-    for record in asyncio.run(_followup_all(records, registry, policy, tracer)):
-        enriched_records.append(record["record"])
-        results_by_entity[record["entity_id"]] = record["results"]
-        promoted_candidates.extend(record["promoted"])
-    results_path, promoted_json_path, enriched_path = write_followup_artifacts(
-        output_dir,
-        results_by_entity=results_by_entity,
-        promoted_candidates=promoted_candidates,
-        enriched_records=enriched_records,
-    )
-    write_resolved_policy(output_dir / "resolved_policy.json", policy)
-    trace_path = tracer.write(paths.traces_root / f"{run_id}.json")
-    console.print(f"Follow-up results: {results_path}")
-    console.print(f"Promoted candidates: {promoted_json_path}")
-    console.print(f"Enriched discovery: {enriched_path}")
-    console.print(f"Resolved policy: {output_dir / 'resolved_policy.json'}")
-    console.print(f"Trace file: {trace_path}")
+    with _policy_guard():
+        paths = WorkspacePaths.resolve(workspace_root)
+        paths.ensure()
+        policy = load_context_policy(policy_path)
+        exec_policy = load_execution_policy(execution_policy_path)
+        enforce_command_stage(exec_policy, "followup-search")
+        from doc_workbench.execution_policy import enforce_followup_search, enforce_download_enabled
+        enforce_followup_search(exec_policy)
+        # followup-search materializes artifacts (fetch + registry write) so it must
+        # also respect the download.enabled flag, not only followup_search.enabled.
+        enforce_download_enabled(exec_policy)
+        registry = DocumentRegistry(paths.registry_root, exec_policy=exec_policy)
+        output_dir, run_id = paths.new_run_dir("followup_search")
+        tracer = RunTrace(trace_id=run_id, run_id=run_id, command="followup-search", policy_digest=policy.digest, exec_policy_digest=exec_policy.digest)
+        records = load_discovery_records(input_path)
+        results_by_entity: dict[str, list] = {}
+        promoted_candidates = []
+        enriched_records = []
+        for record in asyncio.run(_followup_all(records, registry, policy, tracer, exec_policy=exec_policy)):
+            enriched_records.append(record["record"])
+            results_by_entity[record["entity_id"]] = record["results"]
+            promoted_candidates.extend(record["promoted"])
+        results_path, promoted_json_path, enriched_path = write_followup_artifacts(
+            output_dir,
+            results_by_entity=results_by_entity,
+            promoted_candidates=promoted_candidates,
+            enriched_records=enriched_records,
+        )
+        write_resolved_policy(output_dir / "resolved_policy.json", policy)
+        write_resolved_execution_policy(output_dir / "resolved_execution_policy.json", exec_policy)
+        trace_path = tracer.write(paths.traces_root / f"{run_id}.json")
+        console.print(f"Follow-up results: {results_path}")
+        console.print(f"Promoted candidates: {promoted_json_path}")
+        console.print(f"Enriched discovery: {enriched_path}")
+        console.print(f"Resolved policy: {output_dir / 'resolved_policy.json'}")
+        console.print(f"Resolved execution policy: {output_dir / 'resolved_execution_policy.json'}")
+        console.print(f"Trace file: {trace_path}")
 
 
-async def _followup_all(records: list, registry: DocumentRegistry, policy, tracer: RunTrace) -> list[dict]:
+async def _followup_all(records: list, registry: DocumentRegistry, policy, tracer: RunTrace, exec_policy=None) -> list[dict]:
     output: list[dict] = []
     approval_cutoff = policy.review_thresholds.approved_min_confidence
     for record in records:
@@ -361,6 +510,7 @@ async def _followup_all(records: list, registry: DocumentRegistry, policy, trace
                 seed_candidates,
                 materialize=True,
                 registry=registry,
+                exec_policy=exec_policy,
             )
         else:
             results, promoted = [], []
@@ -422,53 +572,67 @@ def scan(
     all_: bool = typer.Option(False, "--all"),
     workspace_root: str | None = typer.Option(None, "--workspace-root"),
     force: bool = typer.Option(False, "--force"),
+    execution_policy_path: str | None = typer.Option(None, "--execution-policy-path"),
 ) -> None:
-    if not entity_id and not all_:
-        raise typer.BadParameter("Pass --all or --entity-id.")
-    paths = WorkspacePaths.resolve(workspace_root)
-    paths.ensure()
-    registry = DocumentRegistry(paths.registry_root)
-    manifests = registry.list_manifests(entity_id or None, artifact_family="annual_reports")
-    output_dir, run_id = paths.new_run_dir("scan")
-    tracer = RunTrace(trace_id=run_id, run_id=run_id, command="scan", policy_digest="")
-    rows: list[MetadataScanRow] = []
-    start = time.perf_counter()
-    for manifest in manifests:
-        if not force and ((manifest.get("pipeline_status") or {}).get("metadata_scan_status") == "complete"):
-            continue
-        result = scan_pdf(Path(str(manifest["local_path"])))
-        updated = registry.update_manifest(
-            str(manifest["document_id"]),
-            {
-                "metadata": result,
-                "pipeline_status": {"metadata_scan_status": result["status"]},
-            },
-        )
-        rows.append(
-            MetadataScanRow(
-                document_id=str(updated["document_id"]),
-                entity_id=str(updated["entity_id"]),
-                entity_name=str(updated["entity_name"]),
-                title=str((updated.get("metadata") or {}).get("title") or ""),
-                issuer_name=str((updated.get("metadata") or {}).get("issuer_name") or ""),
-                reporting_period=str((updated.get("metadata") or {}).get("reporting_period") or ""),
-                publication_date=str((updated.get("metadata") or {}).get("publication_date") or ""),
-                page_count=(updated.get("metadata") or {}).get("page_count"),
-                modality=str((updated.get("metadata") or {}).get("modality") or ""),
-                status=str((updated.get("pipeline_status") or {}).get("metadata_scan_status") or ""),
-                error=str((updated.get("metadata") or {}).get("error") or ""),
+    with _policy_guard():
+        if not entity_id and not all_:
+            raise typer.BadParameter("Pass --all or --entity-id.")
+        paths = WorkspacePaths.resolve(workspace_root)
+        paths.ensure()
+        exec_policy = load_execution_policy(execution_policy_path)
+        enforce_command_stage(exec_policy, "scan")
+        registry = DocumentRegistry(paths.registry_root)
+        manifests = registry.list_manifests(entity_id or None, artifact_family="annual_reports")
+        output_dir, run_id = paths.new_run_dir("scan")
+        tracer = RunTrace(trace_id=run_id, run_id=run_id, command="scan", policy_digest="", exec_policy_digest=exec_policy.digest)
+        rows: list[MetadataScanRow] = []
+        start = time.perf_counter()
+        for manifest in manifests:
+            if not force and ((manifest.get("pipeline_status") or {}).get("metadata_scan_status") == "complete"):
+                continue
+            artifact_path = Path(str(manifest["local_path"]))
+            # Enforce that the artifact is inside the allowed registry root before
+            # reading it — prevents a tampered manifest from pointing outside the
+            # workspace.
+            enforce_registry_root(exec_policy, artifact_path, paths.root)
+            # Enforce file size before read_bytes() to avoid OOM on huge files.
+            if artifact_path.exists():
+                enforce_file_size(exec_policy, artifact_path.stat().st_size, str(artifact_path))
+            result = scan_pdf(artifact_path, content_type=str(manifest.get("content_type") or "application/pdf"))
+            updated = registry.update_manifest(
+                str(manifest["document_id"]),
+                {
+                    "metadata": result,
+                    "pipeline_status": {"metadata_scan_status": result["status"]},
+                },
             )
+            rows.append(
+                MetadataScanRow(
+                    document_id=str(updated["document_id"]),
+                    entity_id=str(updated["entity_id"]),
+                    entity_name=str(updated["entity_name"]),
+                    title=str((updated.get("metadata") or {}).get("title") or ""),
+                    issuer_name=str((updated.get("metadata") or {}).get("issuer_name") or ""),
+                    reporting_period=str((updated.get("metadata") or {}).get("reporting_period") or ""),
+                    publication_date=str((updated.get("metadata") or {}).get("publication_date") or ""),
+                    page_count=(updated.get("metadata") or {}).get("page_count"),
+                    modality=str((updated.get("metadata") or {}).get("modality") or ""),
+                    status=str((updated.get("pipeline_status") or {}).get("metadata_scan_status") or ""),
+                    error=str((updated.get("metadata") or {}).get("error") or ""),
+                )
+            )
+        json_path = output_dir / "scan_results.json"
+        json_path.write_text(json.dumps([row.to_dict() for row in rows], indent=2), encoding="utf-8")
+        tracer.add_span(
+            entity_id=entity_id or "all",
+            stage="metadata_scan",
+            provider="metadata_scanner",
+            latency_ms=(time.perf_counter() - start) * 1000.0,
+            candidate_count_in=len(manifests),
+            candidate_count_out=len(rows),
         )
-    json_path = output_dir / "scan_results.json"
-    json_path.write_text(json.dumps([row.to_dict() for row in rows], indent=2), encoding="utf-8")
-    tracer.add_span(
-        entity_id=entity_id or "all",
-        stage="metadata_scan",
-        provider="metadata_scanner",
-        latency_ms=(time.perf_counter() - start) * 1000.0,
-        candidate_count_in=len(manifests),
-        candidate_count_out=len(rows),
-    )
-    trace_path = tracer.write(paths.traces_root / f"{run_id}.json")
-    console.print(f"Metadata scan results: {json_path}")
-    console.print(f"Trace file: {trace_path}")
+        trace_path = tracer.write(paths.traces_root / f"{run_id}.json")
+        write_resolved_execution_policy(output_dir / "resolved_execution_policy.json", exec_policy)
+        console.print(f"Metadata scan results: {json_path}")
+        console.print(f"Resolved execution policy: {output_dir / 'resolved_execution_policy.json'}")
+        console.print(f"Trace file: {trace_path}")

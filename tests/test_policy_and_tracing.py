@@ -19,7 +19,7 @@ def test_discover_writes_policy_and_trace_artifacts(tmp_path: Path, monkeypatch)
         encoding="utf-8",
     )
 
-    async def fake_discover_entity(entity, *, followup_search=False, policy=None, tracer=None):
+    async def fake_discover_entity(entity, *, followup_search=False, policy=None, tracer=None, exec_policy=None):
         candidate = DiscoveryCandidate(
             entity_id=entity.entity_id,
             entity_name=entity.name,

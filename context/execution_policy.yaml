@@ -1,0 +1,93 @@
+# execution_policy.yaml
+#
+# Governs what the doc-workbench runtime is *allowed to do* during a run.
+# This is separate from context_policy.yaml, which governs acquisition
+# strategy (where to search, in what order).
+#
+# Enforcement is deterministic: a violation raises PolicyViolationError
+# and stops execution before any unsafe write or network call.
+#
+# Resolution order when --execution-policy-path is not supplied:
+#   1. importlib.resources (installed wheel)
+#   2. context/execution_policy.yaml (repo-root fallback for source-tree runs)
+
+# ---------------------------------------------------------------------------
+# Command-stage permissions
+# ---------------------------------------------------------------------------
+# Which CLI commands the runtime is allowed to execute.
+# Remove a stage to hard-block it at the CLI entrypoint.
+allowed_command_stages:
+  - discover
+  - review
+  - download
+  - followup-search
+  - scan
+
+# ---------------------------------------------------------------------------
+# Source / domain family permissions
+# ---------------------------------------------------------------------------
+# Allowlist of domain suffixes.  A request whose host does not match any entry
+# (suffix or exact) is rejected before any data is transferred.
+#
+# SAFE DEFAULT: explicit allowlist of well-known public annual-report hosts.
+# To allow all domains (disables egress control entirely), add a single entry:
+#   - "*"
+# WARNING: using "*" is an EXPLICIT opt-in for demo / sandbox environments only.
+# In production, keep this list tight and add only the domains you trust.
+allowed_source_families:
+  - "sec.gov"
+  - "annualreports.com"
+  - "investor.apple.com"
+  - "ir.aboutamazon.com"
+  - "abc.xyz"
+  - "microsoft.com"
+  - "investor.fb.com"
+  - "investor.atmeta.com"
+  - "investors.google.com"
+  - "s3.amazonaws.com"
+  - "s3-us-west-2.amazonaws.com"
+  - "storage.googleapis.com"
+  # Search API endpoints — required for Serper / Brave search expansion.
+  # These hosts only receive the API key you have configured; no user data
+  # is sent to them.  Remove if you do not use search providers.
+  - "google.serper.dev"
+  - "api.search.brave.com"
+
+# ---------------------------------------------------------------------------
+# Download permissions
+# ---------------------------------------------------------------------------
+download:
+  enabled: true
+
+  # Hard cap on number of documents downloaded per run.
+  max_count: 50
+
+  # Maximum file size accepted before registry write (bytes).
+  # Default: 50 MB.
+  max_file_size_bytes: 52428800
+
+  # MIME types accepted before registry write.
+  # Use "*" to allow all types (disables MIME enforcement).
+  # The default is an explicit allowlist — remove a type to block it.
+  # Do NOT add "*" or "application/octet-stream" unless you intentionally
+  # want to allow unknown/generic binary content.
+  allowed_mime_types:
+    - "application/pdf"
+    - "text/html"
+
+# ---------------------------------------------------------------------------
+# Follow-up search permissions
+# ---------------------------------------------------------------------------
+followup_search:
+  # When false, any attempt to run follow-up extraction is blocked
+  # before the stage executes, in both legacy and LangGraph paths.
+  enabled: true
+
+# ---------------------------------------------------------------------------
+# Registry write location
+# ---------------------------------------------------------------------------
+registry:
+  # Restrict registry writes to this subdirectory of the workspace root.
+  # Use "" to allow any path under workspace root.
+  # Example: "registry"  →  only workspace/registry/** may be written.
+  root_restriction: "registry"

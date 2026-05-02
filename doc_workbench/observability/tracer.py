@@ -37,6 +37,7 @@ class RunTrace:
     run_id: str
     command: str
     policy_digest: str
+    exec_policy_digest: str = ""
     spans: list[TraceSpan] = field(default_factory=list)
 
     def add_span(
@@ -70,13 +71,15 @@ class RunTrace:
         )
 
     def write(self, path: Path) -> Path:
-        payload = {
+        payload: dict[str, Any] = {
             "trace_id": self.trace_id,
             "run_id": self.run_id,
             "command": self.command,
             "policy_digest": self.policy_digest,
             "spans": [span.to_dict() for span in self.spans],
         }
+        if self.exec_policy_digest:
+            payload["exec_policy_digest"] = self.exec_policy_digest
         path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
         return path
 

@@ -9,8 +9,11 @@ LangGraph execution path with safe opt-in observability.
 
 | Signal | Why it matters to a technical lead |
 |---|---|
-| Two execution models, one contract | The default legacy path and the LangGraph path produce the same core output filenames, so orchestration can evolve without breaking downstream consumers. |
-| Policy-driven ranking and review | Discovery and review share the same packaged context policy, which keeps source-priority and recommendation logic consistent across CLI runs, installs, and evals. |
+| Permissioned document acquisition | Every run is governed by both a context policy (acquisition strategy) and an execution policy (what the runtime may do). Both are emitted as per-run JSON sidecars. |
+| Two execution models, one contract | The default legacy path and the LangGraph path produce the same core output filenames, and both enforce the same execution policy, so orchestration can evolve without breaking downstream consumers or bypassing safety rules. |
+ | Execution-policy sidecars | The `discover`, `review`, `download`, and `followup-search` commands each write `resolved_execution_policy.json` alongside `resolved_policy.json`. A reviewer can reconstruct the exact constraints in force for any acquisition run. |
+| Safe-by-default download workflow | Blocked domains, disallowed MIME types, and oversize files are rejected *before* any registry write. The download stage enforces all execution-policy rules deterministically. |
+| Hardened local runtime | The container runs as a non-root user with a read-only code area and a separate writable workspace mount. See `docs/hardened-runtime.md`. |
 | Local-first traceability | Every run writes local JSON traces plus decision sidecars such as `ranking_trace.json` and `review_trace.json`. |
 | Safe remote telemetry | Langfuse is explicit opt-in, credentials-gated, URL-sanitized, and suppressed during eval runs. |
 | Packaging discipline | Policy files and eval fixtures ship inside the installed package, so the CLI works after `pip install` without depending on the source tree. |
@@ -152,14 +155,28 @@ python -m pip install -e ".[dev,orchestration]"
 python -m pip install -e ".[dev,orchestration,observability]"
 ```
 
-### Docker
+### Docker (hardened)
 
 ```bash
-docker build -t doc-workbench .
-docker run --rm -it -v "$PWD:/app" doc-workbench paths
+mkdir -p workspace
+docker build -t doc-workbench:local .
+
+# Hardened run: non-root, read-only code area, writable workspace mount
+docker run --rm \
+  --user 65534:65534 \
+  --read-only \
+  --tmpfs /tmp \
+  -v "$PWD/workspace:/workspace" \
+  -v "$PWD/examples:/app/examples:ro" \
+  -e DOC_WORKBENCH_HOME=/workspace \
+  doc-workbench:local \
+  discover --entities examples/public_companies.csv
+
+# Or with docker compose
+docker compose run --rm workbench paths
 ```
 
-Bind-mounting the repo keeps `workspace/` outputs on the host and makes repo-relative inputs such as `examples/` available inside the container.
+See [`docs/hardened-runtime.md`](docs/hardened-runtime.md) for the full hardening story.
 
 ## CLI Surface
 
@@ -190,9 +207,9 @@ One of the strongest design signals in this repo is that downstream artifacts st
 
 | Command | Core outputs | Why they exist |
 |---|---|---|
-| `discover` | `discover.json`, `discover_summary.csv`, `ranking_trace.json`, `resolved_policy.json`, trace file | Candidate pool snapshot plus ranking explainability |
-| `review` | `review_queue.csv`, `review_trace.json`, `resolved_policy.json`, trace file | Human-review handoff with recommendation rationale |
-| `download` | downloaded files plus registry manifests | Persistent local registry for approved artifacts |
+| `discover` | `discover.json`, `discover_summary.csv`, `ranking_trace.json`, `resolved_policy.json`, `resolved_execution_policy.json`, trace file | Candidate pool snapshot plus ranking explainability and runtime constraint record |
+| `review` | `review_queue.csv`, `review_trace.json`, `resolved_policy.json`, `resolved_execution_policy.json`, trace file | Human-review handoff with recommendation rationale and policy record |
+| `download` | downloaded files plus registry manifests, `resolved_execution_policy.json` | Persistent local registry for approved artifacts, under documented execution constraints |
 | `scan` | updated manifest metadata | Lightweight PDF metadata enrichment |
 | `eval` | `evals/latest_report.json` | Regression signal for ranking and recommendation behavior |
 
@@ -211,6 +228,35 @@ acquisition_order:
 ```
 
 Every `discover` and `review` run writes a `resolved_policy.json` sidecar so the exact policy used for that run is preserved next to the outputs.
+
+### Execution policy
+
+A separate execution policy governs what the runtime is *allowed to do*. The two policies are distinct:
+
+| Policy | File | Governs |
+|---|---|---|
+| Context policy | `context_policy.yaml` | where to search, in what order |
+| Execution policy | `execution_policy.yaml` | what the runtime may fetch, download, or write |
+
+The execution policy (`context/execution_policy.yaml`, bundled as `doc_workbench/context/execution_policy.yaml`) controls:
+
+- which command stages are permitted to run
+- which source domains may be fetched
+- whether downloads are enabled, and at what count / size / MIME-type limits
+- whether follow-up extraction is permitted
+- which path the registry may write to
+
+Enforcement is **deterministic and pre-action**: a `PolicyViolationError` is raised before any network call or registry write. Both the legacy path and the LangGraph path enforce the same execution policy — neither engine can bypass what the other enforces.
+
+The `discover`, `review`, `download`, and `followup-search` commands each write a `resolved_execution_policy.json` sidecar, so a reviewer can reconstruct the exact runtime constraints in force for that acquisition run. The `scan` and `eval` commands do not perform network acquisition and do not emit this sidecar.
+
+To use a custom execution policy:
+
+```bash
+doc-workbench discover \
+  --entities examples/public_companies.csv \
+  --execution-policy-path /path/to/custom_execution_policy.yaml
+```
 
 ### Decision traces
 
@@ -271,10 +317,12 @@ Per-fixture metrics:
 |---|---|
 | Provider orchestration and public acquisition flow | `doc_workbench/acquisition/discovery.py` |
 | LangGraph node boundaries and state handoff | `doc_workbench/orchestration/nodes.py` and `doc_workbench/orchestration/graph.py` |
-| Policy packaging and runtime loading | `doc_workbench/policy.py` and `doc_workbench/context/` |
+| Context policy packaging and runtime loading | `doc_workbench/policy.py` and `doc_workbench/context/` |
+| Execution policy enforcement | `doc_workbench/execution_policy.py` |
 | Safe remote observability | `doc_workbench/observability/langfuse_bridge.py` |
 | Review classification and queue building | `doc_workbench/review/workflow.py` |
 | Installable regression harness | `doc_workbench/evals/run_evals.py` |
+| Hardened local runtime | `docs/hardened-runtime.md` |
 
 ## Public-Safe Boundaries
 
@@ -296,3 +344,4 @@ What is intentionally generalized or removed:
 ## More Detail
 
 - Architecture reference: [`docs/architecture.md`](docs/architecture.md)
+- Hardened local runtime: [`docs/hardened-runtime.md`](docs/hardened-runtime.md)

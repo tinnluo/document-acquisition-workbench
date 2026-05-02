@@ -1,0 +1,55 @@
+# docker-compose.yml — hardened local runtime for doc-workbench
+#
+# Security model demonstrated here:
+#   - Non-root: service runs as UID/GID 65534 (nobody).
+#   - Read-only code area: /app is mounted read-only.
+#   - Writable workspace: only /workspace is writable, and only on the host.
+#   - No network surprise: the container uses the default bridge;
+#     restrict further with `networks: none` if offline operation is required.
+#
+# Usage:
+#   docker compose run --rm workbench discover --entities examples/public_companies.csv
+#   docker compose run --rm workbench eval
+#   docker compose run --rm workbench paths
+#
+# Outputs land in ./workspace/ on the host.
+
+services:
+  workbench:
+    build: .
+    image: doc-workbench:local
+
+    # Run as nobody (UID 65534) — same as the Dockerfile USER directive.
+    # Explicit here so compose does not override with a root default.
+    user: "65534:65534"
+
+    # Read-only code area.  Nothing in /app may be written at runtime.
+    read_only: true
+
+    volumes:
+      # Host workspace receives all run outputs.
+      # Only this directory is writable inside the container.
+      - type: bind
+        source: ./workspace
+        target: /workspace
+
+      # Optional: mount the examples directory so the default entities CSV
+      # is available without baking it into the image.
+      - type: bind
+        source: ./examples
+        target: /app/examples
+        read_only: true
+
+    environment:
+      DOC_WORKBENCH_HOME: /workspace
+      # Langfuse remote tracing is off by default.
+      # Uncomment and populate to enable opt-in remote observability:
+      # DOC_WORKBENCH_ENABLE_LANGFUSE: "1"
+      # LANGFUSE_SECRET_KEY: "sk-..."
+      # LANGFUSE_PUBLIC_KEY: "pk-..."
+      # LANGFUSE_HOST: "https://cloud.langfuse.com"
+
+    # Tmp space for Python's own ephemeral writes (e.g. importlib cache).
+    # Required when read_only: true is set.
+    tmpfs:
+      - /tmp

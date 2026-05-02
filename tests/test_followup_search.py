@@ -5,6 +5,7 @@ import json
 from io import BytesIO
 from pathlib import Path
 
+import yaml
 from pypdf import PdfWriter
 from typer.testing import CliRunner
 
@@ -21,6 +22,30 @@ def _sample_pdf_bytes() -> bytes:
     writer.write(buffer)
     return buffer.getvalue()
 
+
+def _write_permissive_exec_policy(tmp_path: Path) -> Path:
+    """Write a test-only permissive execution policy (all domains/MIME allowed).
+
+    Tests using synthetic URLs (e.g. example.com) must opt in to the wildcard
+    domain allowlist explicitly — it is no longer the shipping default.
+    """
+    policy_file = tmp_path / "test_exec_policy.yaml"
+    policy_file.write_text(
+        yaml.dump({
+            "allowed_command_stages": ["discover", "review", "download", "followup-search", "scan"],
+            "allowed_source_families": ["*"],
+            "download": {
+                "enabled": True,
+                "max_count": 50,
+                "max_file_size_bytes": 52_428_800,
+                "allowed_mime_types": ["application/pdf", "text/html"],
+            },
+            "followup_search": {"enabled": True},
+            "registry": {"root_restriction": "registry"},
+        }),
+        encoding="utf-8",
+    )
+    return policy_file
 
 def test_followup_search_materializes_and_download_reuses_target(tmp_path: Path, monkeypatch) -> None:
     workspace = tmp_path / "workspace"
@@ -56,7 +81,7 @@ def test_followup_search_materializes_and_download_reuses_target(tmp_path: Path,
         encoding="utf-8",
     )
 
-    async def fake_fetch(url: str) -> tuple[bytes, str, str]:
+    async def fake_fetch(url: str, exec_policy=None) -> tuple[bytes, str, str]:
         if url == "https://search.example/result":
             html = b'<html><head><title>Seed</title></head><body><a href="https://example.com/annual-report-2024.pdf">Annual Report 2024</a></body></html>'
             return html, "text/html", url
@@ -64,13 +89,13 @@ def test_followup_search_materializes_and_download_reuses_target(tmp_path: Path,
             return _sample_pdf_bytes(), "application/pdf", url
         raise AssertionError(f"Unexpected URL: {url}")
 
-    async def fail_download(_url: str) -> bytes:
+    async def fail_download(_url: str, exec_policy=None) -> bytes:
         raise AssertionError("download_bytes should not be called when follow-up target is already materialized")
 
     import doc_workbench.acquisition.followup.workflow as workflow
     from doc_workbench.acquisition.followup.models import ResolvedTarget
 
-    async def fake_resolve(pointer):
+    async def fake_resolve(pointer, exec_policy=None):
         return ResolvedTarget(
             original_url=pointer.url,
             resolved_url=pointer.url,
@@ -85,9 +110,16 @@ def test_followup_search_materializes_and_download_reuses_target(tmp_path: Path,
     monkeypatch.setattr(workflow, "resolve_pointer", fake_resolve)
     monkeypatch.setattr(cli, "download_bytes", fail_download)
 
+    exec_policy_file = _write_permissive_exec_policy(tmp_path)
+
     followup_result = runner.invoke(
         cli.app,
-        ["followup-search", "--input", str(discover_json), "--workspace-root", str(workspace)],
+        [
+            "followup-search",
+            "--input", str(discover_json),
+            "--workspace-root", str(workspace),
+            "--execution-policy-path", str(exec_policy_file),
+        ],
     )
     assert followup_result.exit_code == 0
 
@@ -116,7 +148,12 @@ def test_followup_search_materializes_and_download_reuses_target(tmp_path: Path,
 
     download_result = runner.invoke(
         cli.app,
-        ["download", "--input", str(review_csv), "--workspace-root", str(workspace)],
+        [
+            "download",
+            "--input", str(review_csv),
+            "--workspace-root", str(workspace),
+            "--execution-policy-path", str(exec_policy_file),
+        ],
     )
     assert download_result.exit_code == 0
 

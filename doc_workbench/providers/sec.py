@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 
-import httpx
-
+from doc_workbench.http_utils import safe_get
 from doc_workbench.models import EntityRecord
 
 
@@ -17,16 +17,22 @@ def _normalize_cik(cik: str) -> str:
 class SecRegulatoryFilingsProvider:
     user_agent: str = "doc-workbench/0.1 (public demo)"
 
-    async def discover(self, entity: EntityRecord) -> list[dict]:
+    async def discover(self, entity: EntityRecord, exec_policy: Any = None) -> list[dict]:
         normalized_cik = _normalize_cik(entity.cik)
         if not normalized_cik:
             return []
         url = f"https://data.sec.gov/submissions/CIK{normalized_cik}.json"
-        headers = {"User-Agent": self.user_agent}
-        async with httpx.AsyncClient(timeout=20.0, follow_redirects=True, headers=headers) as client:
-            response = await client.get(url)
-            response.raise_for_status()
-            payload = response.json()
+        # Enforce domain before the request — sec.gov is in the default
+        # allowlist, but an operator may have restricted it further.
+        if exec_policy is not None:
+            from doc_workbench.execution_policy import enforce_domain
+            enforce_domain(exec_policy, url)
+        content_bytes, _ct, _final_url = await safe_get(url, exec_policy=exec_policy, timeout=20.0)
+        try:
+            import json
+            payload = json.loads(content_bytes)
+        except Exception:
+            return []
         recent = ((payload or {}).get("filings") or {}).get("recent") or {}
         forms = recent.get("form") or []
         dates = recent.get("filingDate") or []

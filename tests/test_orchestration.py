@@ -209,7 +209,7 @@ def test_run_graph_produces_ranked_records(tmp_path: Path) -> None:
     entity = _make_entity()
     tracer = RunTrace(trace_id="test", run_id="test", command="discover", policy_digest=policy.digest)
 
-    async def _fake_discover(ent, *, followup_search=False, policy=None, tracer=None, _skip_ranking=False, _force_skip_followup=False):
+    async def _fake_discover(ent, *, followup_search=False, policy=None, tracer=None, _skip_ranking=False, _force_skip_followup=False, exec_policy=None):
         return _make_record(ent, [_make_candidate(ent, "https://testcorp.example.com/ar.pdf", confidence=0.91)])
 
     with patch("doc_workbench.orchestration.nodes.discover_entity", new=_fake_discover):
@@ -233,7 +233,7 @@ def test_run_graph_full_mode_produces_review_rows(tmp_path: Path) -> None:
     entity = _make_entity()
     tracer = RunTrace(trace_id="test", run_id="test", command="discover", policy_digest=policy.digest)
 
-    async def _fake_discover(ent, *, followup_search=False, policy=None, tracer=None, _skip_ranking=False, _force_skip_followup=False):
+    async def _fake_discover(ent, *, followup_search=False, policy=None, tracer=None, _skip_ranking=False, _force_skip_followup=False, exec_policy=None):
         return _make_record(ent, [_make_candidate(ent, "https://testcorp.example.com/ar.pdf", confidence=0.91)])
 
     with patch("doc_workbench.orchestration.nodes.discover_entity", new=_fake_discover):

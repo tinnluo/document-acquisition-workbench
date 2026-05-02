@@ -23,6 +23,7 @@ class WorkbenchState(TypedDict, total=False):
     # --- inputs (set before graph invocation) ---
     entities: list[Any]           # list[EntityRecord]
     policy: ContextPolicy
+    exec_policy: Any              # ExecutionPolicy | None — governs runtime permissions
     tracer: RunTrace
     output_dir: Path
     followup_search: bool
