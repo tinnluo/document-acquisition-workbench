@@ -142,9 +142,7 @@ def test_download_fetch_attempt_count_enforces_egress_cap_on_repeated_failures(
     so repeated failures could bypass the egress cap indefinitely.  The fix uses
     fetch_attempt_count (incremented before the network call) for enforcement.
     """
-    import asyncio
     import yaml
-    from doc_workbench.execution_policy import PolicyViolationError
 
     workspace = tmp_path / "workspace"
     registry_dir = workspace / "registry"
@@ -201,7 +199,7 @@ def test_download_fetch_attempt_count_enforces_egress_cap_on_repeated_failures(
                 "followup_target_document_id": "",
             })
 
-    result = runner.invoke(
+    runner.invoke(
         cli.app,
         [
             "download",

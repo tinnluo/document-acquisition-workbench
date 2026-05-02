@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import csv
 import json
+from typing import Any
 import click
 import time
 from pathlib import Path
@@ -301,11 +303,10 @@ def download(
 async def _download_from_review(
     input_path: Path,
     registry: DocumentRegistry,
-    exec_policy: "ExecutionPolicy | None" = None,
+    exec_policy: Any = None,
     registry_root: "Path | None" = None,
 ) -> list[DownloadRow]:
     from doc_workbench.execution_policy import (
-        ExecutionPolicy,
         enforce_domain,
         enforce_download_enabled,
         enforce_download_count,

@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import json
 import os
 from typing import Any
 from urllib.parse import urlparse
 
-from doc_workbench.http_utils import safe_get
 from doc_workbench.providers.base import SearchProvider, SearchResult
 
 _SERPER_ENDPOINT = "https://google.serper.dev/search"

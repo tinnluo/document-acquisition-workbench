@@ -198,7 +198,6 @@ def test_enforce_command_stage_empty_list_blocks_all() -> None:
     # Empty allowlist = fail closed: every stage is blocked.
     # This prevents a partial/malformed custom policy from silently disabling
     # stage gating.
-    from dataclasses import replace
     policy = _make_policy(allowed_command_stages=["discover"])
     empty_policy = ExecutionPolicy(
         allowed_command_stages=[],
@@ -541,7 +540,6 @@ def test_pointer_domain_blocked_before_resolve(monkeypatch) -> None:
     is called, preventing any network egress to blocked domains."""
     import asyncio
     import doc_workbench.acquisition.followup.workflow as workflow
-    from doc_workbench.acquisition.followup.models import FollowupPointer
     from doc_workbench.models import DiscoveryCandidate, EntityRecord
 
     resolve_calls: list[str] = []
@@ -624,7 +622,6 @@ def test_registry_entity_id_path_traversal_blocked(tmp_path: Path) -> None:
 def test_langgraph_followup_node_no_followup_search_with_disabled_policy(monkeypatch) -> None:
     """followup_node must NOT raise PolicyViolationError when followup_search=False,
     even if exec_policy.followup_search.enabled is False."""
-    import asyncio
     from doc_workbench.orchestration import nodes
     from doc_workbench.models import DiscoveryRecord, EntityRecord
     from doc_workbench.policy import load_context_policy
@@ -674,7 +671,8 @@ def test_parse_bool_rejects_quoted_false() -> None:
 def test_load_execution_policy_rejects_quoted_bool(tmp_path: Path) -> None:
     """load_execution_policy must fail with a clear message when a boolean field
     is written as a quoted string in the YAML file."""
-    import yaml, pytest
+    import yaml
+    import pytest
     from doc_workbench.execution_policy import load_execution_policy
 
     policy_file = tmp_path / "policy.yaml"

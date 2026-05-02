@@ -12,7 +12,6 @@ from urllib.parse import urljoin, urlparse
 # reference it without a local import.  It must never be swallowed.
 from doc_workbench.execution_policy import PolicyViolationError
 
-import httpx
 from bs4 import BeautifulSoup
 from pypdf import PdfReader
 
