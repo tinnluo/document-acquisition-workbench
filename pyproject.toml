@@ -21,6 +21,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "pytest>=8.0.0",
+  "respx>=0.20",
 ]
 observability = [
   "langfuse>=2.0",
