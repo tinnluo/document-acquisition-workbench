@@ -5,3 +5,4 @@ __pycache__/
 workspace/
 evals/latest_report.json
 dist/
+.opencode/
