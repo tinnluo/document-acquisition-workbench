@@ -115,28 +115,27 @@ def test_load_execution_policy_defaults() -> None:
     )
 
 
-def test_execution_policy_yaml_copies_are_identical() -> None:
-    """Both YAML copies (repo-root and bundled package) must be byte-for-byte identical.
+def test_execution_policy_yaml_bundled_and_readable() -> None:
+    """The bundled execution policy YAML is the single canonical source.
 
-    A drift between the two would mean source-tree runs and installed-wheel runs
-    enforce different defaults — a security-sensitive inconsistency.
+    The root-level context/ directory was removed — doc_workbench/context/ is
+    the only copy.  This test verifies the bundled file is present, readable,
+    and parses as valid YAML with the expected top-level keys.
     """
     import importlib.resources
     repo_root = Path(__file__).resolve().parents[1]
-    repo_copy = (repo_root / "context" / "execution_policy.yaml").read_text(encoding="utf-8")
 
     try:
         ref = importlib.resources.files("doc_workbench.context").joinpath("execution_policy.yaml")
         with importlib.resources.as_file(ref) as p:
-            pkg_copy = Path(p).read_text(encoding="utf-8")
+            content = Path(p).read_text(encoding="utf-8")
     except (ModuleNotFoundError, FileNotFoundError, TypeError):
-        pkg_copy_path = repo_root / "doc_workbench" / "context" / "execution_policy.yaml"
-        pkg_copy = pkg_copy_path.read_text(encoding="utf-8")
+        content = (repo_root / "doc_workbench" / "context" / "execution_policy.yaml").read_text(encoding="utf-8")
 
-    assert repo_copy == pkg_copy, (
-        "context/execution_policy.yaml and doc_workbench/context/execution_policy.yaml "
-        "have drifted. Keep them in sync — one canonical source, copied at build time."
-    )
+    parsed = yaml.safe_load(content)
+    assert isinstance(parsed, dict), "execution_policy.yaml must parse as a YAML mapping"
+    for key in ("allowed_command_stages", "allowed_source_families", "download", "followup_search"):
+        assert key in parsed, f"expected top-level key '{key}' missing from execution_policy.yaml"
 
 
 def test_load_execution_policy_from_custom_file(tmp_path: Path) -> None:
