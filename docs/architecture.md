@@ -168,7 +168,7 @@ Artifact stability is one of the strongest architectural choices in the repo.
 | Download | `download_results.json`, `download_results.csv`, `resolved_execution_policy.json` | record of what was fetched and under which execution constraints |
 | Trace | `workspace/traces/{run_id}.json` | local execution record independent of remote telemetry |
 | Registry | `workspace/registry/*` | persistent downloaded-document state |
-| Eval | `evals/latest_report.json` | machine-readable regression report |
+| Eval | `eval_report.json` (written to current directory) | machine-readable regression report |
 
 The artifact filenames are intentionally stable across execution models so downstream consumers do not care whether the run was legacy or LangGraph-backed.
 
@@ -282,7 +282,6 @@ This repo is intentionally installable, not just source-tree runnable.
 |---|---|
 | Context policy | packaged under `doc_workbench/context/` |
 | Eval harness | packaged under `doc_workbench/evals/` |
-| Source-tree convenience shim | `evals/run_evals.py` delegates to package module |
 | Orchestration dependency | optional extra: `[orchestration]` |
 | Remote observability dependency | optional extra: `[observability]` |
 

@@ -116,6 +116,7 @@ def discover_node(state: WorkbenchState) -> dict[str, Any]:
                 top_candidate_url=top_url_local,
                 top_confidence=top_conf_local,
                 details={"ranking_deferred": True},
+                retry_count=0,
             )
 
     if lf is not None:
@@ -262,6 +263,7 @@ def followup_node(state: WorkbenchState) -> dict[str, Any]:
                 top_candidate_url=top_url_local,
                 top_confidence=top_conf_local,
                 details={"enabled": followup_enabled, "reason": followup_reason},
+                retry_count=0,
             )
 
     if lf is not None:
@@ -347,6 +349,7 @@ def rank_node(state: WorkbenchState) -> dict[str, Any]:
                 top_candidate_url=top_url_local,
                 top_confidence=top_conf_local,
                 details={"ranking_deferred": False},
+                retry_count=0,
             )
 
     if lf is not None:
@@ -395,6 +398,7 @@ def review_prep_node(state: WorkbenchState) -> dict[str, Any]:
             candidate_count_in=sum(len(r.candidates) for r in records),
             candidate_count_out=len(rows),
             recommendation_summary=recommendation_summary,
+            retry_count=0,
         )
 
     if lf is not None:

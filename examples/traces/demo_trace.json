@@ -1,0 +1,296 @@
+{
+  "trace_id": "discover_20260505_203441",
+  "run_id": "discover_20260505_203441",
+  "command": "discover",
+  "policy_digest": "50b948665c64437b",
+  "spans": [
+    {
+      "trace_id": "discover_20260505_203441",
+      "entity_id": "nvda",
+      "stage": "official_site_lookup",
+      "provider": "official_site",
+      "latency_ms": 180.448,
+      "candidate_count_in": 0,
+      "candidate_count_out": 0,
+      "top_confidence": 0.0,
+      "retry_count": 0
+    },
+    {
+      "trace_id": "discover_20260505_203441",
+      "entity_id": "ko",
+      "stage": "official_site_lookup",
+      "provider": "official_site",
+      "latency_ms": 469.726,
+      "candidate_count_in": 0,
+      "candidate_count_out": 10,
+      "top_candidate_url": "https://investors.coca-colacompany.com/_assets/_723f86a264b315034a1d93f8e240920c/cocacolacompany/db/880/11107/earnings_release/Coca-Cola+2026+Q1+Earnings+Release_Full+Release_4.28.26.pdf",
+      "top_confidence": 0.99,
+      "retry_count": 0
+    },
+    {
+      "trace_id": "discover_20260505_203441",
+      "entity_id": "msft",
+      "stage": "official_site_lookup",
+      "provider": "official_site",
+      "latency_ms": 773.877,
+      "candidate_count_in": 0,
+      "candidate_count_out": 10,
+      "top_candidate_url": "https://www.microsoft.com/en-us/investor/default",
+      "top_confidence": 0.85,
+      "retry_count": 0
+    },
+    {
+      "trace_id": "discover_20260505_203441",
+      "entity_id": "nvda",
+      "stage": "regulatory_fallback_lookup",
+      "provider": "regulatory_filings",
+      "latency_ms": 495.078,
+      "candidate_count_in": 0,
+      "candidate_count_out": 1,
+      "top_candidate_url": "https://www.sec.gov/Archives/edgar/data/1045810/000104581026000021/nvda-20260125.htm",
+      "top_confidence": 0.88,
+      "retry_count": 0
+    },
+    {
+      "trace_id": "discover_20260505_203441",
+      "entity_id": "nvda",
+      "stage": "search_expansion",
+      "provider": "search",
+      "latency_ms": 0.018,
+      "candidate_count_in": 0,
+      "candidate_count_out": 0,
+      "top_confidence": 0.0,
+      "retry_count": 0
+    },
+    {
+      "trace_id": "discover_20260505_203441",
+      "entity_id": "nvda",
+      "stage": "candidate_pool_assembled",
+      "provider": "orchestrator",
+      "latency_ms": 0.011,
+      "candidate_count_in": 1,
+      "candidate_count_out": 1,
+      "top_candidate_url": "https://www.sec.gov/Archives/edgar/data/1045810/000104581026000021/nvda-20260125.htm",
+      "top_confidence": 0.88,
+      "details": {
+        "ranking_deferred": true,
+        "note": "unsorted; rank_node owns final ranking and capping"
+      },
+      "retry_count": 0
+    },
+    {
+      "trace_id": "discover_20260505_203441",
+      "entity_id": "msft",
+      "stage": "regulatory_fallback_lookup",
+      "provider": "regulatory_filings",
+      "latency_ms": 398.473,
+      "candidate_count_in": 0,
+      "candidate_count_out": 1,
+      "top_candidate_url": "https://www.sec.gov/Archives/edgar/data/789019/000095017025100235/msft-20250630.htm",
+      "top_confidence": 0.88,
+      "retry_count": 0
+    },
+    {
+      "trace_id": "discover_20260505_203441",
+      "entity_id": "msft",
+      "stage": "search_expansion",
+      "provider": "search",
+      "latency_ms": 0.024,
+      "candidate_count_in": 0,
+      "candidate_count_out": 0,
+      "top_confidence": 0.0,
+      "retry_count": 0
+    },
+    {
+      "trace_id": "discover_20260505_203441",
+      "entity_id": "msft",
+      "stage": "candidate_pool_assembled",
+      "provider": "orchestrator",
+      "latency_ms": 0.032,
+      "candidate_count_in": 11,
+      "candidate_count_out": 11,
+      "top_candidate_url": "https://www.sec.gov/Archives/edgar/data/789019/000095017025100235/msft-20250630.htm",
+      "top_confidence": 0.88,
+      "details": {
+        "ranking_deferred": true,
+        "note": "unsorted; rank_node owns final ranking and capping"
+      },
+      "retry_count": 0
+    },
+    {
+      "trace_id": "discover_20260505_203441",
+      "entity_id": "ko",
+      "stage": "regulatory_fallback_lookup",
+      "provider": "regulatory_filings",
+      "latency_ms": 901.305,
+      "candidate_count_in": 0,
+      "candidate_count_out": 1,
+      "top_candidate_url": "https://www.sec.gov/Archives/edgar/data/21344/000162828026010047/ko-20251231.htm",
+      "top_confidence": 0.88,
+      "retry_count": 0
+    },
+    {
+      "trace_id": "discover_20260505_203441",
+      "entity_id": "ko",
+      "stage": "search_expansion",
+      "provider": "search",
+      "latency_ms": 0.014,
+      "candidate_count_in": 0,
+      "candidate_count_out": 0,
+      "top_confidence": 0.0,
+      "retry_count": 0
+    },
+    {
+      "trace_id": "discover_20260505_203441",
+      "entity_id": "ko",
+      "stage": "candidate_pool_assembled",
+      "provider": "orchestrator",
+      "latency_ms": 0.013,
+      "candidate_count_in": 11,
+      "candidate_count_out": 11,
+      "top_candidate_url": "https://investors.coca-colacompany.com/_assets/_723f86a264b315034a1d93f8e240920c/cocacolacompany/db/880/11107/earnings_release/Coca-Cola+2026+Q1+Earnings+Release_Full+Release_4.28.26.pdf",
+      "top_confidence": 0.99,
+      "details": {
+        "ranking_deferred": true,
+        "note": "unsorted; rank_node owns final ranking and capping"
+      },
+      "retry_count": 0
+    },
+    {
+      "trace_id": "discover_20260505_203441",
+      "entity_id": "msft",
+      "stage": "discover_entity_pre_rank",
+      "provider": "orchestrator",
+      "latency_ms": 1172.442,
+      "candidate_count_in": 0,
+      "candidate_count_out": 11,
+      "top_candidate_url": "https://www.sec.gov/Archives/edgar/data/789019/000095017025100235/msft-20250630.htm",
+      "top_confidence": 0.88,
+      "details": {
+        "ranking_deferred": true
+      },
+      "retry_count": 0
+    },
+    {
+      "trace_id": "discover_20260505_203441",
+      "entity_id": "nvda",
+      "stage": "discover_entity_pre_rank",
+      "provider": "orchestrator",
+      "latency_ms": 675.59,
+      "candidate_count_in": 0,
+      "candidate_count_out": 1,
+      "top_candidate_url": "https://www.sec.gov/Archives/edgar/data/1045810/000104581026000021/nvda-20260125.htm",
+      "top_confidence": 0.88,
+      "details": {
+        "ranking_deferred": true
+      },
+      "retry_count": 0
+    },
+    {
+      "trace_id": "discover_20260505_203441",
+      "entity_id": "ko",
+      "stage": "discover_entity_pre_rank",
+      "provider": "orchestrator",
+      "latency_ms": 1371.088,
+      "candidate_count_in": 0,
+      "candidate_count_out": 11,
+      "top_candidate_url": "https://investors.coca-colacompany.com/_assets/_723f86a264b315034a1d93f8e240920c/cocacolacompany/db/880/11107/earnings_release/Coca-Cola+2026+Q1+Earnings+Release_Full+Release_4.28.26.pdf",
+      "top_confidence": 0.99,
+      "details": {
+        "ranking_deferred": true
+      },
+      "retry_count": 0
+    },
+    {
+      "trace_id": "discover_20260505_203441",
+      "entity_id": "msft",
+      "stage": "followup_extraction",
+      "provider": "followup_search",
+      "latency_ms": 0.126,
+      "candidate_count_in": 0,
+      "candidate_count_out": 0,
+      "top_confidence": 0.0,
+      "details": {
+        "enabled": false,
+        "reason": "cli_flag_disabled"
+      },
+      "retry_count": 0
+    },
+    {
+      "trace_id": "discover_20260505_203441",
+      "entity_id": "nvda",
+      "stage": "followup_extraction",
+      "provider": "followup_search",
+      "latency_ms": 0.009,
+      "candidate_count_in": 0,
+      "candidate_count_out": 0,
+      "top_confidence": 0.0,
+      "details": {
+        "enabled": false,
+        "reason": "cli_flag_disabled"
+      },
+      "retry_count": 0
+    },
+    {
+      "trace_id": "discover_20260505_203441",
+      "entity_id": "ko",
+      "stage": "followup_extraction",
+      "provider": "followup_search",
+      "latency_ms": 0.048,
+      "candidate_count_in": 0,
+      "candidate_count_out": 0,
+      "top_confidence": 0.0,
+      "details": {
+        "enabled": false,
+        "reason": "cli_flag_disabled"
+      },
+      "retry_count": 0
+    },
+    {
+      "trace_id": "discover_20260505_203441",
+      "entity_id": "msft",
+      "stage": "candidate_ranking",
+      "provider": "ranking_policy",
+      "latency_ms": 0.312,
+      "candidate_count_in": 11,
+      "candidate_count_out": 10,
+      "top_candidate_url": "https://www.microsoft.com/en-us/investor/default",
+      "top_confidence": 0.85,
+      "details": {
+        "ranking_deferred": false
+      },
+      "retry_count": 0
+    },
+    {
+      "trace_id": "discover_20260505_203441",
+      "entity_id": "nvda",
+      "stage": "candidate_ranking",
+      "provider": "ranking_policy",
+      "latency_ms": 0.05,
+      "candidate_count_in": 1,
+      "candidate_count_out": 1,
+      "top_candidate_url": "https://www.sec.gov/Archives/edgar/data/1045810/000104581026000021/nvda-20260125.htm",
+      "top_confidence": 0.45,
+      "details": {
+        "ranking_deferred": false
+      },
+      "retry_count": 0
+    },
+    {
+      "trace_id": "discover_20260505_203441",
+      "entity_id": "ko",
+      "stage": "candidate_ranking",
+      "provider": "ranking_policy",
+      "latency_ms": 0.375,
+      "candidate_count_in": 11,
+      "candidate_count_out": 10,
+      "top_candidate_url": "https://investors.coca-colacompany.com/_assets/_723f86a264b315034a1d93f8e240920c/cocacolacompany/db/880/11107/earnings_release/Coca-Cola+2026+Q1+Earnings+Release_Full+Release_4.28.26.pdf",
+      "top_confidence": 0.99,
+      "details": {
+        "ranking_deferred": false
+      },
+      "retry_count": 0
+    }
+  ],
+  "exec_policy_digest": "3b885c1ce272662e"
+}

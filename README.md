@@ -41,7 +41,7 @@ end
 subgraph OUTPUTS["Artifacts and telemetry"]
   O1["📄 Run outputs<br/>discover.json | review_queue.csv"]:::artifact
   O2["📄 Trace + policy<br/>ranking_trace.json | review_trace.json<br/>resolved_policy.json | workspace/traces/*.json"]:::artifact
-  O3["📡 Optional telemetry + evals<br/>Langfuse | evals/latest_report.json"]:::external
+  O3["📡 Optional telemetry + evals<br/>Langfuse | eval report"]:::external
 end
 
 E --> P
@@ -211,13 +211,13 @@ One of the strongest design signals in this repo is that downstream artifacts st
 | `review` | `review_queue.csv`, `review_trace.json`, `resolved_policy.json`, `resolved_execution_policy.json`, trace file | Human-review handoff with recommendation rationale and policy record |
 | `download` | downloaded files plus registry manifests, `resolved_execution_policy.json` | Persistent local registry for approved artifacts, under documented execution constraints |
 | `scan` | updated manifest metadata | Lightweight PDF metadata enrichment |
-| `eval` | `evals/latest_report.json` | Regression signal for ranking and recommendation behavior |
+| `eval` | `eval_report.json` (written to current directory) | Regression signal for ranking and recommendation behavior |
 
 ## Policy, Explainability, And Observability
 
 ### Context policy
 
-The acquisition policy is bundled inside the package at `doc_workbench/context/context_policy.yaml`. The runtime loads it via `importlib.resources`, so installed users get the same policy behavior without needing the source tree. The root-level `context/` directory is just a contributor-readable copy.
+The acquisition policy is bundled inside the package at `doc_workbench/context/context_policy.yaml`. The runtime loads it via `importlib.resources`, so installed users get the same policy behavior without needing the source tree.
 
 ```yaml
 acquisition_order:
@@ -238,7 +238,7 @@ A separate execution policy governs what the runtime is *allowed to do*. The two
 | Context policy | `context_policy.yaml` | where to search, in what order |
 | Execution policy | `execution_policy.yaml` | what the runtime may fetch, download, or write |
 
-The execution policy (`context/execution_policy.yaml`, bundled as `doc_workbench/context/execution_policy.yaml`) controls:
+The execution policy (`doc_workbench/context/execution_policy.yaml`) controls:
 
 - which command stages are permitted to run
 - which source domains may be fetched (explicit allowlist — no wildcard default)
@@ -304,12 +304,9 @@ The eval harness ships inside the package at `doc_workbench/evals/`, so it works
 ```bash
 doc-workbench eval
 python -m doc_workbench.evals.run_evals
-
-# Source-tree convenience shim
-python evals/run_evals.py
 ```
 
-Output: `evals/latest_report.json`
+Output: `eval_report.json` (written to current directory)
 
 Per-fixture metrics:
 

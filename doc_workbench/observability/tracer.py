@@ -8,6 +8,33 @@ from typing import Any
 
 @dataclass(slots=True)
 class TraceSpan:
+    """A single stage span within a pipeline run trace.
+
+    Fields
+    ------
+    trace_id, entity_id, stage, provider
+        Identity and routing metadata.
+    latency_ms
+        Wall-clock time for this stage in milliseconds.
+    candidate_count_in / candidate_count_out
+        How many document candidates entered and exited this stage.
+    top_candidate_url, top_confidence
+        Best-scored result after this stage.
+    recommendation_summary
+        ``{approved: N, needs_review: N, rejected: N}`` — populated only on
+        the ``review_queue_generation`` stage.
+    details
+        Stage-specific free-form dict (e.g. ``{"enabled": false, "reason":
+        "higher_priority_approved"}``).
+    retry_count
+        Number of retry attempts made before this span completed.  Currently
+        always ``0``; reserved for future retry/backoff instrumentation where
+        nodes catch transient errors (e.g. HTTP 429, network timeout) and
+        retry before surfacing a result.  When retry logic is added, nodes
+        should increment this counter on each failed attempt and pass the
+        final value to ``RunTrace.add_span()``.
+    """
+
     trace_id: str
     entity_id: str
     stage: str
@@ -19,6 +46,7 @@ class TraceSpan:
     top_confidence: float = 0.0
     recommendation_summary: dict[str, int] = field(default_factory=dict)
     details: dict[str, Any] = field(default_factory=dict)
+    retry_count: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -53,6 +81,7 @@ class RunTrace:
         top_confidence: float = 0.0,
         recommendation_summary: dict[str, int] | None = None,
         details: dict[str, Any] | None = None,
+        retry_count: int = 0,
     ) -> None:
         self.spans.append(
             TraceSpan(
@@ -67,6 +96,7 @@ class RunTrace:
                 top_confidence=top_confidence,
                 recommendation_summary=recommendation_summary or {},
                 details=details or {},
+                retry_count=retry_count,
             )
         )
 

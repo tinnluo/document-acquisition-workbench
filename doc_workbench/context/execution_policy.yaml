@@ -41,6 +41,8 @@ allowed_source_families:
   - "ir.aboutamazon.com"
   - "abc.xyz"
   - "microsoft.com"
+  - "investor.nvidia.com"
+  - "investors.coca-colacompany.com"
   - "investor.fb.com"
   - "investor.atmeta.com"
   - "investors.google.com"
