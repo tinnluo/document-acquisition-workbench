@@ -282,6 +282,8 @@ Two observability layers run in parallel:
 | Local traces | Always on. JSON spans are written under `workspace/traces/` for discovery, follow-up, ranking, and review stages. |
 | Langfuse remote traces | Optional. Enabled only when the explicit opt-in gate and credentials are both present. |
 
+Both layers share a common `trace_id` (UUID) generated at CLI entry, enabling correlation between local debugging artifacts and remote telemetry.
+
 ```bash
 export DOC_WORKBENCH_ENABLE_LANGFUSE=1
 export LANGFUSE_SECRET_KEY=sk-...
@@ -296,6 +298,7 @@ Important observability guarantees:
 - Remote Langfuse spans are emitted only by the LangGraph path.
 - Eval runs suppress Langfuse even if the environment is configured for remote tracing.
 - Telemetry URLs are sanitized before remote emission so embedded credentials are never forwarded.
+- Local JSON traces and remote Langfuse spans share the same `trace_id` for cross-system correlation.
 
 ## Evals
 

@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import csv
 import json
+import uuid
 from typing import Any
 import click
 import time
@@ -123,7 +124,8 @@ def discover(
         except ValueError as exc:
             raise click.BadParameter(str(exc), param_hint="'--engine' / DOC_WORKBENCH_ENGINE") from exc
         output_dir, run_id = paths.new_run_dir("discover")
-        tracer = RunTrace(trace_id=run_id, run_id=run_id, command="discover", policy_digest=policy.digest, exec_policy_digest=exec_policy.digest)
+        trace_id = uuid.uuid4().hex
+        tracer = RunTrace(trace_id=trace_id, run_id=run_id, command="discover", policy_digest=policy.digest, exec_policy_digest=exec_policy.digest)
 
         if selected_engine == "langgraph":
             try:
@@ -196,7 +198,8 @@ def review(
         except ValueError as exc:
             raise click.BadParameter(str(exc), param_hint="'--engine' / DOC_WORKBENCH_ENGINE") from exc
         output_dir, run_id = paths.new_run_dir("review")
-        tracer = RunTrace(trace_id=run_id, run_id=run_id, command="review", policy_digest=policy.digest, exec_policy_digest=exec_policy.digest)
+        trace_id = uuid.uuid4().hex
+        tracer = RunTrace(trace_id=trace_id, run_id=run_id, command="review", policy_digest=policy.digest, exec_policy_digest=exec_policy.digest)
 
         if selected_engine == "langgraph":
             from doc_workbench.acquisition.followup.workflow import load_discovery_records as _load
@@ -265,7 +268,8 @@ def download(
         exec_policy = load_execution_policy(execution_policy_path)
         enforce_command_stage(exec_policy, "download")
         output_dir, run_id = paths.new_run_dir("download")
-        tracer = RunTrace(trace_id=run_id, run_id=run_id, command="download", policy_digest="", exec_policy_digest=exec_policy.digest)
+        trace_id = uuid.uuid4().hex
+        tracer = RunTrace(trace_id=trace_id, run_id=run_id, command="download", policy_digest="", exec_policy_digest=exec_policy.digest)
         registry = DocumentRegistry(paths.registry_root, exec_policy=exec_policy)
         start = time.perf_counter()
         rows = asyncio.run(_download_from_review(input_path, registry, exec_policy, paths.registry_root))
@@ -463,7 +467,8 @@ def followup_search(
         enforce_download_enabled(exec_policy)
         registry = DocumentRegistry(paths.registry_root, exec_policy=exec_policy)
         output_dir, run_id = paths.new_run_dir("followup_search")
-        tracer = RunTrace(trace_id=run_id, run_id=run_id, command="followup-search", policy_digest=policy.digest, exec_policy_digest=exec_policy.digest)
+        trace_id = uuid.uuid4().hex
+        tracer = RunTrace(trace_id=trace_id, run_id=run_id, command="followup-search", policy_digest=policy.digest, exec_policy_digest=exec_policy.digest)
         records = load_discovery_records(input_path)
         results_by_entity: dict[str, list] = {}
         promoted_candidates = []
@@ -585,7 +590,8 @@ def scan(
         registry = DocumentRegistry(paths.registry_root)
         manifests = registry.list_manifests(entity_id or None, artifact_family="annual_reports")
         output_dir, run_id = paths.new_run_dir("scan")
-        tracer = RunTrace(trace_id=run_id, run_id=run_id, command="scan", policy_digest="", exec_policy_digest=exec_policy.digest)
+        trace_id = uuid.uuid4().hex
+        tracer = RunTrace(trace_id=trace_id, run_id=run_id, command="scan", policy_digest="", exec_policy_digest=exec_policy.digest)
         rows: list[MetadataScanRow] = []
         start = time.perf_counter()
         for manifest in manifests:

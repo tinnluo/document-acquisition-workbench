@@ -181,9 +181,15 @@ Two observability layers run in parallel:
 | Local JSON traces | Always on. Written under `workspace/traces/` for all runs. |
 | Langfuse remote spans | Optional. Only active when explicit opt-in and credentials are both present. |
 
+Both layers share a common `trace_id` (32-character lowercase hexadecimal UUID) generated at CLI entry, enabling correlation between local debugging artifacts and remote telemetry.
+
 ### Local traces
 
-`RunTrace` records stage-level spans for the acquisition workflow and writes them to disk with the run ID.
+`RunTrace` records stage-level spans for the acquisition workflow and writes them to disk with the run ID. Each trace includes:
+
+- `trace_id`: UUID for correlation with remote spans
+- `run_id`: timestamp-based identifier for local file naming
+- `spans`: stage-level execution records with latency and candidate counts
 
 Key semantic detail:
 
@@ -200,6 +206,8 @@ Key semantic detail:
 - falls back to a no-op client on any missing gate or SDK failure
 - sanitizes URLs before remote emission so embedded credentials are never forwarded
 - is suppressed entirely during `doc-workbench eval`
+- accepts `trace_id` parameter to correlate with local traces
+- invalidates cached client when `trace_id` changes to ensure proper trace boundaries
 
 Remote Langfuse spans are produced only by the LangGraph path.
 

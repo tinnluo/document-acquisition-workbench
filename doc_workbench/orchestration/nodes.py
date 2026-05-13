@@ -82,7 +82,7 @@ def discover_node(state: WorkbenchState) -> dict[str, Any]:
     entities = state["entities"]
     policy: ContextPolicy = state["policy"]
     tracer = state.get("tracer")
-    lf = get_langfuse_client()
+    lf = get_langfuse_client(trace_id=tracer.trace_id if tracer else None)
 
     exec_policy = state.get("exec_policy")
 
@@ -159,7 +159,7 @@ def followup_node(state: WorkbenchState) -> dict[str, Any]:
     exec_policy = state.get("exec_policy")
     followup_search: bool = state.get("followup_search", False)
     tracer = state.get("tracer")
-    lf = get_langfuse_client()
+    lf = get_langfuse_client(trace_id=tracer.trace_id if tracer else None)
 
     # Execution-policy enforcement: only enforce followup_search.enabled when
     # follow-up was actually requested. Enforcing unconditionally would cause
@@ -306,7 +306,7 @@ def rank_node(state: WorkbenchState) -> dict[str, Any]:
     records: list[DiscoveryRecord] = state.get("followup_records") or state.get("discovery_records", [])
     policy: ContextPolicy = state["policy"]
     tracer = state.get("tracer")
-    lf = get_langfuse_client()
+    lf = get_langfuse_client(trace_id=tracer.trace_id if tracer else None)
 
     ranked: list[DiscoveryRecord] = []
     per_record_ms: list[float] = []
@@ -383,7 +383,7 @@ def review_prep_node(state: WorkbenchState) -> dict[str, Any]:
     records: list[DiscoveryRecord] = state.get("ranked_records") or state.get("discovery_records", [])
     policy: ContextPolicy = state["policy"]
     tracer = state.get("tracer")
-    lf = get_langfuse_client()
+    lf = get_langfuse_client(trace_id=tracer.trace_id if tracer else None)
 
     start = time.perf_counter()
     rows, review_trace, recommendation_summary = build_review_rows_from_records(records, policy)
