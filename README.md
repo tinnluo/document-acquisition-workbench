@@ -178,6 +178,34 @@ docker compose run --rm workbench paths
 
 See [`docs/hardened-runtime.md`](docs/hardened-runtime.md) for the full hardening story.
 
+## Deployment Options
+
+### Local Development
+Use the Docker setup above for local development and testing.
+
+### Google Cloud Platform (GCP)
+Production deployment to GCP using Cloud Run Jobs, Cloud Storage, and Cloud Scheduler:
+
+```bash
+# Deploy infrastructure with Terraform
+cd terraform/gcp
+terraform init -backend-config=backend-prod.hcl
+terraform apply -var-file=../environments/prod.tfvars
+
+# Or use GitHub Actions CI/CD
+# Push to main branch triggers automatic deployment
+```
+
+**Architecture**:
+- **Cloud Run Job** - Batch processing with automatic scaling
+- **Cloud Storage** - Registry storage via volume mounts at `/mnt/gcs`
+- **Cloud Scheduler** - Periodic job triggers (optional)
+- **Secret Manager** - API key storage (SERPER_API_KEY or BRAVE_API_KEY)
+
+See [`docs/deployment_gcp.md`](docs/deployment_gcp.md) for complete deployment guide.
+
+⚠️ **Note**: GCS volume mount write permissions need testing in dev environment. See `terraform/GCS_MOUNT_PERMISSIONS_ISSUE.md` if issues occur.
+
 ## CLI Surface
 
 ```bash
@@ -351,3 +379,4 @@ What is intentionally generalized or removed:
 
 - Architecture reference: [`docs/architecture.md`](docs/architecture.md)
 - Hardened local runtime: [`docs/hardened-runtime.md`](docs/hardened-runtime.md)
+- GCP deployment guide: [`docs/deployment_gcp.md`](docs/deployment_gcp.md)

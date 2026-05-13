@@ -358,7 +358,7 @@ async def _download_from_review(
                         # the approved URL instead of reusing the cached artifact.
                         existing_manifest = None
                 if existing_manifest is not None:
-                    local_path = Path(str(existing_manifest["local_path"]))
+                    local_path = registry._normalize_manifest_path(str(existing_manifest["local_path"]))
                     content_type = str(existing_manifest.get("content_type") or "application/pdf")
                     # 1. Validate path is inside registry root BEFORE any I/O.
                     if exec_policy is not None and registry_root is not None:
@@ -597,7 +597,7 @@ def scan(
         for manifest in manifests:
             if not force and ((manifest.get("pipeline_status") or {}).get("metadata_scan_status") == "complete"):
                 continue
-            artifact_path = Path(str(manifest["local_path"]))
+            artifact_path = registry._normalize_manifest_path(str(manifest["local_path"]))
             # Enforce that the artifact is inside the allowed registry root before
             # reading it — prevents a tampered manifest from pointing outside the
             # workspace.

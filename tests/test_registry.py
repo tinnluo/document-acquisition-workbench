@@ -88,3 +88,40 @@ def test_entity_id_collision_does_not_cross_wire_dedupe(tmp_path: Path) -> None:
     result = scan_pdf(pdf_path)
     assert result["title"] == "Annual Report 2024"
     assert result["status"] == "complete"
+
+
+def test_normalize_manifest_path_handles_old_absolute_paths(tmp_path: Path) -> None:
+    """Verify backward compatibility: old manifests with absolute paths from
+    different environments (e.g., /mnt/gcs/registry) are rebased to the
+    current registry_root.
+    """
+    registry = DocumentRegistry(tmp_path / "registry")
+
+    # Test new relative paths (post-migration)
+    relative_path = registry._normalize_manifest_path("entity_123/annual_reports/2023/10-K/doc_abc/artifact.pdf")
+    assert relative_path == tmp_path / "registry" / "entity_123/annual_reports/2023/10-K/doc_abc/artifact.pdf"
+
+    # Test old absolute paths from GCS mount
+    gcs_path = registry._normalize_manifest_path("/mnt/gcs/registry/entity_123/annual_reports/2023/10-K/doc_abc/artifact.pdf")
+    assert gcs_path == tmp_path / "registry" / "entity_123/annual_reports/2023/10-K/doc_abc/artifact.pdf"
+
+    # Test old absolute paths from local workspace (short form)
+    local_path = registry._normalize_manifest_path("/workspace/registry/entity_456/annual_reports/2024/10-Q/doc_def/artifact.pdf")
+    assert local_path == tmp_path / "registry" / "entity_456/annual_reports/2024/10-Q/doc_def/artifact.pdf"
+
+    # Test old absolute paths from default local CLI (actual default case)
+    default_local_path = registry._normalize_manifest_path("/Users/someone/project/workspace/registry/entity_789/annual_reports/2025/10-K/doc_ghi/artifact.pdf")
+    assert default_local_path == tmp_path / "registry" / "entity_789/annual_reports/2025/10-K/doc_ghi/artifact.pdf"
+
+    # Test absolute path with nested registry directories (edge case)
+    nested_path = registry._normalize_manifest_path("/home/user/old-registry/workspace/registry/entity_999/annual_reports/2022/8-K/doc_jkl/artifact.pdf")
+    assert nested_path == tmp_path / "registry" / "entity_999/annual_reports/2022/8-K/doc_jkl/artifact.pdf"
+
+    # Test absolute path with multiple exact "registry" components (uses last occurrence)
+    multi_registry_path = registry._normalize_manifest_path("/var/registry/cache/registry/entity_111/annual_reports/2021/10-K/doc_mno/artifact.pdf")
+    assert multi_registry_path == tmp_path / "registry" / "entity_111/annual_reports/2021/10-K/doc_mno/artifact.pdf"
+
+    # Test unknown absolute path (no "registry" component) - returns as-is
+    unknown_path = registry._normalize_manifest_path("/unknown/path/artifact.pdf")
+    assert unknown_path == Path("/unknown/path/artifact.pdf")
+

@@ -5,3 +5,14 @@ __pycache__/
 workspace/
 dist/
 .opencode/
+
+# Terraform
+terraform/.terraform/
+terraform/**/.terraform/
+terraform/**/*.tfstate
+terraform/**/*.tfstate.backup
+terraform/**/*.tfplan
+terraform/**/terraform.tfvars
+
+# Environment-specific overrides (if any)
+terraform/**/terraform.tfvars.local

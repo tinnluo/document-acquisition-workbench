@@ -36,6 +36,38 @@ class DocumentRegistry:
         self.registry_root.mkdir(parents=True, exist_ok=True)
         self._exec_policy = exec_policy
 
+    def _normalize_manifest_path(self, stored_path: str) -> Path:
+        """Normalize a manifest local_path to current registry_root.
+
+        Handles both:
+        - New relative paths: "entity_123/..." → registry_root / "entity_123/..."
+        - Old absolute paths: "/any/path/registry/entity_123/..." → registry_root / "entity_123/..."
+
+        This provides backward compatibility for manifests created before the
+        relative-path migration, allowing seamless sync between GCS and local.
+        """
+        path = Path(stored_path)
+
+        if not path.is_absolute():
+            return self.registry_root / path
+
+        # Find the LAST occurrence of "registry" in the path to handle cases
+        # where the absolute path contains multiple "registry" components
+        # (e.g., /var/registry/cache/registry/entity_1/...)
+        parts = path.parts
+        registry_idx = None
+        for i, part in enumerate(parts):
+            if part == "registry":
+                registry_idx = i
+
+        if registry_idx is not None:
+            relative_parts = parts[registry_idx + 1:]
+            if relative_parts:
+                return self.registry_root / Path(*relative_parts)
+
+        # If we can't rebase, return as-is (will likely fail downstream validation)
+        return path
+
     def _entity_root(self, entity_id: str, entity_name: str) -> Path:
         safe_id = _safe_path_component(entity_id)
         safe_name = slugify(entity_name)
@@ -117,7 +149,7 @@ class DocumentRegistry:
             if dedupe_scope == "family" and payload.get("artifact_family") != artifact_family:
                 continue
             if payload.get("source_url") == source_url or payload.get("content_hash") == incoming_hash:
-                existing_local_path = Path(str(payload["local_path"]))
+                existing_local_path = self._normalize_manifest_path(str(payload["local_path"]))
                 # Validate the stored local_path is still inside registry_root
                 # before returning it as authoritative — a tampered manifest
                 # could otherwise redirect callers to an out-of-root path.
@@ -187,7 +219,7 @@ class DocumentRegistry:
                 "metadata_scan_status": "pending",
             },
             "created_at": datetime.now(timezone.utc).isoformat(),
-            "local_path": str(local_path),
+            "local_path": str(local_path.relative_to(self.registry_root)),
         }
         (artifact_folder / "metadata.json").write_text(
             json.dumps(manifest, indent=2, ensure_ascii=False),

@@ -1,0 +1,154 @@
+name: Deploy to GCP
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy'
+        required: true
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+
+env:
+  REGION: us-central1
+  ARTIFACT_REGISTRY_REPO: document-acquisition
+
+jobs:
+  determine-environment:
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.set-env.outputs.environment }}
+      project_id: ${{ steps.set-env.outputs.project_id }}
+    steps:
+      - name: Determine environment
+        id: set-env
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            ENV="${{ github.event.inputs.environment }}"
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            ENV="prod"
+          else
+            ENV="dev"
+          fi
+          echo "environment=${ENV}" >> $GITHUB_OUTPUT
+          echo "project_id=document-acquisition-${ENV}" >> $GITHUB_OUTPUT
+
+  terraform-bootstrap:
+    needs: determine-environment
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.5.0
+
+      - name: Terraform Init
+        working-directory: terraform/gcp
+        run: |
+          terraform init -backend-config=backend-${{ needs.determine-environment.outputs.environment }}.hcl
+
+      - name: Terraform Apply (Artifact Registry only)
+        working-directory: terraform/gcp
+        run: |
+          terraform apply -auto-approve \
+            -var-file=../environments/${{ needs.determine-environment.outputs.environment }}.tfvars \
+            -target=module.artifact_registry
+
+  build-and-push:
+    needs: [determine-environment, terraform-bootstrap]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: |
+          gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev
+
+      - name: Build Docker image
+        run: |
+          docker build -t ${{ env.REGION }}-docker.pkg.dev/${{ needs.determine-environment.outputs.project_id }}/${{ env.ARTIFACT_REGISTRY_REPO }}/document-acquisition-workbench:${{ github.sha }} .
+          docker tag ${{ env.REGION }}-docker.pkg.dev/${{ needs.determine-environment.outputs.project_id }}/${{ env.ARTIFACT_REGISTRY_REPO }}/document-acquisition-workbench:${{ github.sha }} \
+            ${{ env.REGION }}-docker.pkg.dev/${{ needs.determine-environment.outputs.project_id }}/${{ env.ARTIFACT_REGISTRY_REPO }}/document-acquisition-workbench:latest
+
+      - name: Push Docker image
+        run: |
+          docker push ${{ env.REGION }}-docker.pkg.dev/${{ needs.determine-environment.outputs.project_id }}/${{ env.ARTIFACT_REGISTRY_REPO }}/document-acquisition-workbench:${{ github.sha }}
+          docker push ${{ env.REGION }}-docker.pkg.dev/${{ needs.determine-environment.outputs.project_id }}/${{ env.ARTIFACT_REGISTRY_REPO }}/document-acquisition-workbench:latest
+
+  terraform-deploy:
+    needs: [determine-environment, build-and-push]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.5.0
+
+      - name: Terraform Init
+        working-directory: terraform/gcp
+        run: |
+          terraform init -backend-config=backend-${{ needs.determine-environment.outputs.environment }}.hcl
+
+      - name: Terraform Plan
+        working-directory: terraform/gcp
+        run: |
+          terraform plan \
+            -var-file=../environments/${{ needs.determine-environment.outputs.environment }}.tfvars \
+            -var="image_uri=${{ env.REGION }}-docker.pkg.dev/${{ needs.determine-environment.outputs.project_id }}/${{ env.ARTIFACT_REGISTRY_REPO }}/document-acquisition-workbench:${{ github.sha }}" \
+            -out=tfplan
+
+      - name: Terraform Apply
+        working-directory: terraform/gcp
+        run: terraform apply -auto-approve tfplan
+
+      - name: Output deployment info
+        working-directory: terraform/gcp
+        run: terraform output -json > deployment-output.json
+
+      - name: Upload deployment artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-output-${{ needs.determine-environment.outputs.environment }}
+          path: terraform/gcp/deployment-output.json
